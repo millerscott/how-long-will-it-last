@@ -5,6 +5,8 @@ import {
   calculateFicaPerEarner,
   calculateAdditionalMedicare,
   calculateTaxableSocialSecurity,
+  calculateCapitalGainsTax,
+  calculateNiit,
 } from './tax'
 
 // ---------------------------------------------------------------------------
@@ -325,5 +327,106 @@ describe('calculateTaxableSocialSecurity', () => {
     const taxableSingle = calculateTaxableSocialSecurity(22_000, 8_000, 'single')
     const taxableMfj = calculateTaxableSocialSecurity(22_000, 8_000, 'marriedFilingJointly')
     expect(taxableSingle).toBeGreaterThan(taxableMfj)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Long-term capital gains tax (2026 — IRS Rev. Proc. 25-32 basis)
+// Single:  0% up to $47,700; 15% up to $524,600; 20% above
+// MFJ:     0% up to $95,400; 15% up to $589,200; 20% above
+// Ordinary income stacks below gains; standard deduction applies to ordinary income.
+// ---------------------------------------------------------------------------
+
+describe('calculateCapitalGainsTax', () => {
+  it('returns 0 for zero gains', () => {
+    expectDollars(calculateCapitalGainsTax(0, 50_000, 'single'), 0)
+  })
+
+  it('returns 0 for negative gains', () => {
+    expectDollars(calculateCapitalGainsTax(-1_000, 50_000, 'single'), 0)
+  })
+
+  it('gains fully in the 0% bracket — low ordinary income', () => {
+    // ordinaryTaxable = 0 (income ≤ standard deduction $16,100)
+    // All $10,000 gains fall below $47,700 → 0% tax
+    expectDollars(calculateCapitalGainsTax(10_000, 10_000, 'single'), 0)
+  })
+
+  it('gains straddling 0% and 15% brackets', () => {
+    // ordinaryTaxable = 30,000 - 16,100 = 13,900
+    // 0% room = 47,700 - 13,900 = 33,800 → first 33,800 at 0%
+    // remaining 6,200 at 15% = $930
+    expectDollars(calculateCapitalGainsTax(40_000, 30_000, 'single'), 930)
+  })
+
+  it('gains fully in the 15% bracket', () => {
+    // ordinaryTaxable = 100,000 - 16,100 = 83,900 (above $47,700)
+    // All gains stack above the 0% threshold → all $50,000 at 15% = $7,500
+    expectDollars(calculateCapitalGainsTax(50_000, 100_000, 'single'), 7_500)
+  })
+
+  it('gains straddling 15% and 20% brackets (high income)', () => {
+    // ordinaryTaxable = 550,000 - 16,100 = 533,900 (above $524,600)
+    // All gains stack above both thresholds → all $100,000 at 20% = $20,000
+    expectDollars(calculateCapitalGainsTax(100_000, 550_000, 'single'), 20_000)
+  })
+
+  it('MFJ 0% threshold is higher than single', () => {
+    // Same income and gains — MFJ should pay less (or equal) capital gains tax
+    const single = calculateCapitalGainsTax(20_000, 40_000, 'single')
+    const mfj = calculateCapitalGainsTax(20_000, 40_000, 'marriedFilingJointly')
+    expect(mfj).toBeLessThanOrEqual(single)
+  })
+
+  it('MFJ with gains in 15% band', () => {
+    // ordinaryTaxable = 120,000 - 32,200 = 87,800
+    // 0% room = 95,400 - 87,800 = 7,600 → first 7,600 at 0%
+    // remaining 12,400 at 15% = $1,860
+    expectDollars(calculateCapitalGainsTax(20_000, 120_000, 'marriedFilingJointly'), 1_860)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Net Investment Income Tax — NIIT (IRC §1411)
+// 3.8% on lesser of NII or (MAGI − threshold)
+// Thresholds: $200,000 single / $250,000 MFJ (statutory, not inflation-adjusted)
+// ---------------------------------------------------------------------------
+
+describe('calculateNiit', () => {
+  it('returns 0 for zero NII', () => {
+    expectDollars(calculateNiit(0, 300_000, 'single'), 0)
+  })
+
+  it('returns 0 for negative NII', () => {
+    expectDollars(calculateNiit(-500, 300_000, 'single'), 0)
+  })
+
+  it('returns 0 when MAGI is at or below the single threshold', () => {
+    expectDollars(calculateNiit(10_000, 200_000, 'single'), 0)
+  })
+
+  it('NII is the binding constraint — only excess MAGI taxed', () => {
+    // MAGI excess = 210,000 - 200,000 = 10,000; NII = 5,000 → min = 5,000 → 5,000 × 3.8% = $190
+    expectDollars(calculateNiit(5_000, 210_000, 'single'), 190)
+  })
+
+  it('excess MAGI is the binding constraint — only NII up to excess taxed', () => {
+    // MAGI excess = 210,000 - 200,000 = 10,000; NII = 50,000 → min = 10,000 → 10,000 × 3.8% = $380
+    expectDollars(calculateNiit(50_000, 210_000, 'single'), 380)
+  })
+
+  it('returns 0 when MFJ MAGI is at or below the MFJ threshold', () => {
+    expectDollars(calculateNiit(10_000, 250_000, 'marriedFilingJointly'), 0)
+  })
+
+  it('applies MFJ threshold correctly', () => {
+    // MAGI excess = 270,000 - 250,000 = 20,000; NII = 30,000 → min = 20,000 → $760
+    expectDollars(calculateNiit(30_000, 270_000, 'marriedFilingJointly'), 760)
+  })
+
+  it('MFJ threshold is higher than single threshold', () => {
+    const magi = 230_000
+    const nii = 20_000
+    expect(calculateNiit(nii, magi, 'single')).toBeGreaterThan(calculateNiit(nii, magi, 'marriedFilingJointly'))
   })
 })

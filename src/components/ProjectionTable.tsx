@@ -82,7 +82,7 @@ export default function ProjectionTable({ snapshots }: Props) {
           </thead>
           <tbody>
             {snapshots.map((s) => {
-              const totalTax = s.federalIncomeTax + s.ficaTax + s.stateIncomeTax
+              const totalTax = s.federalIncomeTax + s.capitalGainsTax + s.niit + s.ficaTax + s.stateIncomeTax
               const incomeOpen = popover?.age === s.age && popover?.type === 'income'
               const taxOpen = popover?.age === s.age && popover?.type === 'tax'
               const assetsOpen = popover?.age === s.age && popover?.type === 'assets'
@@ -153,7 +153,7 @@ export default function ProjectionTable({ snapshots }: Props) {
               <BreakdownRows rows={activeSnapshot.incomeBreakdown.map((i) => ({ label: i.label, value: i.amount }))} />
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>
-                <span>{fmt.format(activeSnapshot.income)}</span>
+                <span>{fmt.format(activeSnapshot.incomeBreakdown.reduce((s, i) => s + i.amount, 0))}</span>
               </div>
             </>
           ) : popover.type === 'tax' ? (
@@ -161,12 +161,14 @@ export default function ProjectionTable({ snapshots }: Props) {
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tax Breakdown</p>
               <BreakdownRows rows={[
                 { label: 'Federal Income Tax', value: activeSnapshot.federalIncomeTax },
+                { label: 'Capital Gains Tax', value: activeSnapshot.capitalGainsTax },
+                { label: 'Net Investment Income Tax', value: activeSnapshot.niit },
                 { label: 'FICA', value: activeSnapshot.ficaTax },
                 { label: 'State Income Tax', value: activeSnapshot.stateIncomeTax },
               ]} />
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>
-                <span>{fmt.format(activeSnapshot.federalIncomeTax + activeSnapshot.ficaTax + activeSnapshot.stateIncomeTax)}</span>
+                <span>{fmt.format(activeSnapshot.federalIncomeTax + activeSnapshot.capitalGainsTax + activeSnapshot.niit + activeSnapshot.ficaTax + activeSnapshot.stateIncomeTax)}</span>
               </div>
             </>
           ) : (

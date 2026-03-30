@@ -119,6 +119,56 @@ export function calculateAdditionalMedicare(
 }
 
 // ---------------------------------------------------------------------------
+// Long-term capital gains (2026 — IRS Rev. Proc. 25-32 basis)
+// Thresholds are based on *taxable* income (ordinary + gains).
+// Ordinary income fills the lower brackets first; gains stack on top.
+// ---------------------------------------------------------------------------
+
+const LTCG_THRESHOLDS: Record<FilingStatus, { zero: number; fifteen: number }> = {
+  single:               { zero: 47_700,  fifteen: 524_600 },
+  marriedFilingJointly: { zero: 95_400,  fifteen: 589_200 },
+}
+
+export function calculateCapitalGainsTax(
+  capitalGains: number,
+  grossOrdinaryIncome: number,
+  filingStatus: FilingStatus,
+): number {
+  if (capitalGains <= 0) return 0
+  const ordinaryTaxable = Math.max(0, grossOrdinaryIncome - FEDERAL_STANDARD_DEDUCTION[filingStatus])
+  const { zero, fifteen } = LTCG_THRESHOLDS[filingStatus]
+
+  const gainsAt0   = Math.max(0, Math.min(capitalGains, zero - ordinaryTaxable))
+  const gainsAbove0 = capitalGains - gainsAt0
+  const gainsAt15  = Math.max(0, Math.min(gainsAbove0, fifteen - Math.max(ordinaryTaxable, zero)))
+  const gainsAt20  = gainsAbove0 - gainsAt15
+
+  return gainsAt15 * 0.15 + gainsAt20 * 0.20
+}
+
+// ---------------------------------------------------------------------------
+// Net Investment Income Tax — NIIT (IRC §1411, statutory thresholds)
+// 3.8% surtax on net investment income above MAGI threshold.
+// Thresholds are NOT inflation-adjusted: $200,000 single / $250,000 MFJ.
+// Applies to the lesser of NII or the excess of MAGI over the threshold.
+// ---------------------------------------------------------------------------
+
+const NIIT_THRESHOLD: Record<FilingStatus, number> = {
+  single:               200_000,
+  marriedFilingJointly: 250_000,
+}
+
+export function calculateNiit(
+  netInvestmentIncome: number,
+  magi: number,
+  filingStatus: FilingStatus,
+): number {
+  if (netInvestmentIncome <= 0) return 0
+  const excess = Math.max(0, magi - NIIT_THRESHOLD[filingStatus])
+  return Math.min(netInvestmentIncome, excess) * 0.038
+}
+
+// ---------------------------------------------------------------------------
 // Social Security taxability (IRS provisional income rules)
 // ---------------------------------------------------------------------------
 

@@ -6,6 +6,8 @@ import {
   calculateFicaPerEarner,
   calculateAdditionalMedicare,
   calculateTaxableSocialSecurity,
+  calculateCapitalGainsTax,
+  calculateNiit,
   type FilingStatus,
 } from './tax'
 
@@ -25,6 +27,8 @@ export interface YearlySnapshot {
   income: number
   incomeBreakdown: IncomeBreakdownItem[]
   federalIncomeTax: number
+  capitalGainsTax: number
+  niit: number
   ficaTax: number
   stateIncomeTax: number
   expenses: number
@@ -32,6 +36,48 @@ export interface YearlySnapshot {
   totalAssets: number
   assetBreakdown: AssetBalance[]
   depleted: boolean
+}
+
+/**
+ * Withdrawal waterfall: if cash is negative, draw from other accounts in tax-optimal order.
+ * Before age 60: Roth before Traditional (both carry early-withdrawal penalty, but Roth
+ * withdrawals are otherwise tax-free). At 60+: Traditional before Roth (preserve
+ * tax-free Roth growth longer, no early-withdrawal penalty).
+ *
+ * NOTE: Traditional withdrawals would normally increase taxable income in the year of
+ * withdrawal; this model does not do withdrawal-level tax attribution.
+ *
+ * Mutates accountBalances in place.
+ */
+export function applyWaterfall(
+  accountBalances: Map<string, number>,
+  cashAssetId: string,
+  householdAssets: AppConfig['householdAssets'],
+  primaryAge: number,
+): { brokerageWithdrawn: number } {
+  const cashBalance = accountBalances.get(cashAssetId) ?? 0
+  if (cashBalance >= 0) return { brokerageWithdrawn: 0 }
+
+  const order: AssetType[] = primaryAge < 60
+    ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
+    : ['moneyMarketSavings', 'taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529']
+
+  let remaining = -cashBalance
+  let brokerageWithdrawn = 0
+  for (const assetType of order) {
+    if (remaining <= 0) break
+    for (const asset of householdAssets.filter((a) => a.type === assetType)) {
+      if (remaining <= 0) break
+      const balance = accountBalances.get(asset.id) ?? 0
+      const withdrawal = Math.min(balance, remaining)
+      accountBalances.set(asset.id, balance - withdrawal)
+      if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
+      remaining -= withdrawal
+    }
+  }
+  // If all sources exhausted, remaining deficit stays as negative cash → depleted trips
+  accountBalances.set(cashAssetId, remaining > 0 ? -remaining : 0)
+  return { brokerageWithdrawn }
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
@@ -85,32 +131,49 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       }
     }
 
-    const income = wageIncome + ssIncome
+    // --- Interest income (cash + money market — taxed annually as ordinary income) ---
+    let interestIncome = 0
+    for (const asset of householdAssets) {
+      if (asset.type === 'cash' || asset.type === 'moneyMarketSavings') {
+        const balance = accountBalances.get(asset.id) ?? 0
+        const interest = balance * assetRates[asset.type]
+        if (interest > 0) {
+          interestIncome += interest
+          incomeBreakdown.push({ label: `Interest (${ASSET_TYPE_LABELS[asset.type]})`, amount: interest })
+        }
+      }
+    }
+
+    const income = wageIncome + ssIncome + interestIncome
 
     // --- Taxes ---
     // Federal: SS benefits are partially taxable based on provisional income
-    const taxableSs = calculateTaxableSocialSecurity(wageIncome, ssIncome, filingStatus)
-    const federalIncomeTax = calculateFederalTax(wageIncome + taxableSs, filingStatus)
+    const taxableSs = calculateTaxableSocialSecurity(wageIncome + interestIncome, ssIncome, filingStatus)
+    const federalIncomeTax = calculateFederalTax(wageIncome + interestIncome + taxableSs, filingStatus)
 
-    // FICA: applied only to wage income, not SS
+    // FICA: applied only to wage income, not SS or interest
     let ficaTax = calculateAdditionalMedicare(wageIncome, filingStatus)
     for (const memberWages of wageByMember.values()) {
       ficaTax += calculateFicaPerEarner(memberWages)
     }
 
-    // State tax: Oregon does not tax SS benefits — pass only wage income
+    // State tax: Oregon does not tax SS benefits — pass wage income + interest
     const statesWithIncome = new Set(
       [...wageByMember.keys()].map((id) => household.find((m) => m.id === id)!.state)
     )
+    // Interest is attributed to the primary member's state
+    const primaryState = primaryMember.state
     let stateIncomeTax = 0
     if (statesWithIncome.size === 1) {
       const state = [...statesWithIncome][0]
-      stateIncomeTax = calculateStateTax(wageIncome, state, filingStatus)
+      stateIncomeTax = calculateStateTax(wageIncome + interestIncome, state, filingStatus)
     } else {
       for (const [memberId, memberWages] of wageByMember) {
         const member = household.find((m) => m.id === memberId)!
         stateIncomeTax += calculateStateTax(memberWages, member.state, filingStatus)
       }
+      // Add interest income to primary member's state
+      stateIncomeTax += calculateStateTax(interestIncome, primaryState, filingStatus)
     }
 
     // --- Expenses ---
@@ -149,32 +212,29 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       accountBalances.set(cashAsset.id, prev + netCashFlow - totalContributions)
     }
 
-    // 3. Withdrawal waterfall: if cash is negative, draw from other accounts in
-    //    tax-optimal order. Before 60: Roth before Traditional (Roth withdrawals
-    //    are cheaper when both carry the early-withdrawal penalty). At 60+:
-    //    Traditional before Roth (preserve tax-free Roth growth longer).
-    //    NOTE: Traditional withdrawals would normally increase taxable income;
-    //    this model does not do withdrawal-level tax attribution.
+    // 3. Withdrawal waterfall
+    let brokerageWithdrawn = 0
     if (cashAsset) {
-      const cashBalance = accountBalances.get(cashAsset.id) ?? 0
-      if (cashBalance < 0) {
-        const WATERFALL_ORDER: AssetType[] = primaryAge < 60
-          ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
-          : ['moneyMarketSavings', 'taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529']
-        let remaining = -cashBalance
-        for (const assetType of WATERFALL_ORDER) {
-          if (remaining <= 0) break
-          for (const asset of householdAssets.filter((a) => a.type === assetType)) {
-            if (remaining <= 0) break
-            const balance = accountBalances.get(asset.id) ?? 0
-            const withdrawal = Math.min(balance, remaining)
-            accountBalances.set(asset.id, balance - withdrawal)
-            remaining -= withdrawal
-          }
-        }
-        // If all sources exhausted, remaining deficit stays as negative cash → depleted trips
-        accountBalances.set(cashAsset.id, -remaining)
-      }
+      ;({ brokerageWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge))
+    }
+
+    if (brokerageWithdrawn > 0) {
+      incomeBreakdown.push({ label: 'Capital Gains (Taxable Brokerage)', amount: brokerageWithdrawn })
+    }
+
+    // 3b. Investment taxes: capital gains on brokerage liquidations + NIIT on all NII
+    const capitalGainsTax = calculateCapitalGainsTax(
+      brokerageWithdrawn,
+      wageIncome + interestIncome + taxableSs,
+      filingStatus,
+    )
+    const magi = wageIncome + interestIncome + taxableSs + brokerageWithdrawn
+    const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
+    const stateCapitalGainsTax = calculateStateTax(brokerageWithdrawn, primaryState, filingStatus)
+    const investmentTaxes = capitalGainsTax + niit + stateCapitalGainsTax
+    if (cashAsset && investmentTaxes > 0) {
+      const prev = accountBalances.get(cashAsset.id) ?? 0
+      accountBalances.set(cashAsset.id, prev - investmentTaxes)
     }
 
     // 4. Apply appreciation to all accounts
@@ -201,8 +261,10 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       income,
       incomeBreakdown,
       federalIncomeTax,
+      capitalGainsTax,
+      niit,
       ficaTax,
-      stateIncomeTax,
+      stateIncomeTax: stateIncomeTax + stateCapitalGainsTax,
       expenses: expenseTotal,
       netCashFlow,
       totalAssets: Math.max(0, totalAssets),
