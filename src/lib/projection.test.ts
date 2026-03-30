@@ -338,6 +338,25 @@ describe('projectFinances', () => {
     expect(result[0].niit).toBe(0)
   })
 
+  it('traditional IRA withdrawal is taxed as ordinary income when waterfall liquidates it', () => {
+    // Age 60+: Traditional is pulled before Roth. $20k expense, no income, cash=0 → waterfall pulls $20k from Traditional
+    // Federal ordinary income tax on $20k: taxable = 20k - 16,100 = 3,900 → 10% × 3,900 = $390
+    const result = projectFinances(baseConfig({
+      simulationYears: 1,
+      household: [member({ ageAtSimulationStart: 60 })],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+        { id: 'trad', type: 'retirementTraditional', balanceAtSimulationStart: 100_000, contributions: [] },
+      ],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 20_000, frequency: 'annual', inflationAdjusted: false }],
+      assetRates: ZERO_RATES,
+    }))
+    expect(result[0].traditionalIraTax).toBeCloseTo(390)
+    const tradItem = result[0].incomeBreakdown.find((b) => b.label === 'Traditional IRA Withdrawal')
+    expect(tradItem).toBeDefined()
+    expect(tradItem!.amount).toBeCloseTo(20_000)
+  })
+
   it('capital gains tax is applied when waterfall liquidates brokerage', () => {
     // $0 cash, $50k brokerage, $20k expense → waterfall pulls $20k from brokerage
     // Low income → gains likely in 0% bracket for single filer
@@ -382,6 +401,7 @@ describe('applyWaterfall', () => {
     expect(balances.get('cash')).toBe(100)
     expect(balances.get('mm')).toBe(1_000)
     expect(result.brokerageWithdrawn).toBe(0)
+    expect(result.traditionalWithdrawn).toBe(0)
   })
 
   it('pulls from money market first', () => {
@@ -400,6 +420,21 @@ describe('applyWaterfall', () => {
     expect(balances.get('mm')).toBe(0)
     expect(balances.get('brok')).toBe(7_000) // 3k withdrawn after MM drained
     expect(result.brokerageWithdrawn).toBe(3_000)
+    expect(result.traditionalWithdrawn).toBe(0)
+  })
+
+  it('tracks traditionalWithdrawn when traditional is liquidated (age 60+)', () => {
+    const balances = makeBalances({ cash: -10_000, trad: 50_000, roth: 50_000 })
+    const result = applyWaterfall(balances, 'cash', assets, 60)
+    expect(result.traditionalWithdrawn).toBe(10_000)
+    expect(result.brokerageWithdrawn).toBe(0)
+  })
+
+  it('traditionalWithdrawn is 0 when roth covers the shortfall pre-60', () => {
+    const balances = makeBalances({ cash: -10_000, trad: 50_000, roth: 50_000 })
+    const result = applyWaterfall(balances, 'cash', assets, 55)
+    expect(result.traditionalWithdrawn).toBe(0)
+    expect(result.brokerageWithdrawn).toBe(0)
   })
 
   it('pre-60: pulls from Roth before Traditional', () => {

@@ -82,7 +82,7 @@ export default function ProjectionTable({ snapshots }: Props) {
           </thead>
           <tbody>
             {snapshots.map((s) => {
-              const totalTax = s.federalIncomeTax + s.capitalGainsTax + s.niit + s.ficaTax + s.stateIncomeTax
+              const totalTax = s.federalIncomeTax + s.capitalGainsTax + s.niit + s.traditionalIraTax + s.ficaTax + s.stateIncomeTax
               const incomeOpen = popover?.age === s.age && popover?.type === 'income'
               const taxOpen = popover?.age === s.age && popover?.type === 'tax'
               const assetsOpen = popover?.age === s.age && popover?.type === 'assets'
@@ -162,13 +162,14 @@ export default function ProjectionTable({ snapshots }: Props) {
               <BreakdownRows rows={[
                 { label: 'Federal Income Tax', value: activeSnapshot.federalIncomeTax },
                 { label: 'Capital Gains Tax', value: activeSnapshot.capitalGainsTax },
+                { label: 'Traditional IRA Tax', value: activeSnapshot.traditionalIraTax },
                 { label: 'Net Investment Income Tax', value: activeSnapshot.niit },
                 { label: 'FICA', value: activeSnapshot.ficaTax },
                 { label: 'State Income Tax', value: activeSnapshot.stateIncomeTax },
               ]} />
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>
-                <span>{fmt.format(activeSnapshot.federalIncomeTax + activeSnapshot.capitalGainsTax + activeSnapshot.niit + activeSnapshot.ficaTax + activeSnapshot.stateIncomeTax)}</span>
+                <span>{fmt.format(activeSnapshot.federalIncomeTax + activeSnapshot.capitalGainsTax + activeSnapshot.niit + activeSnapshot.traditionalIraTax + activeSnapshot.ficaTax + activeSnapshot.stateIncomeTax)}</span>
               </div>
             </>
           ) : (

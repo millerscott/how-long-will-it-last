@@ -29,6 +29,7 @@ export interface YearlySnapshot {
   federalIncomeTax: number
   capitalGainsTax: number
   niit: number
+  traditionalIraTax: number
   ficaTax: number
   stateIncomeTax: number
   expenses: number
@@ -44,8 +45,8 @@ export interface YearlySnapshot {
  * withdrawals are otherwise tax-free). At 60+: Traditional before Roth (preserve
  * tax-free Roth growth longer, no early-withdrawal penalty).
  *
- * NOTE: Traditional withdrawals would normally increase taxable income in the year of
- * withdrawal; this model does not do withdrawal-level tax attribution.
+ * Returns the amounts withdrawn from taxable brokerage and traditional retirement accounts
+ * so the caller can compute the appropriate taxes post-waterfall.
  *
  * Mutates accountBalances in place.
  */
@@ -54,9 +55,9 @@ export function applyWaterfall(
   cashAssetId: string,
   householdAssets: AppConfig['householdAssets'],
   primaryAge: number,
-): { brokerageWithdrawn: number } {
+): { brokerageWithdrawn: number; traditionalWithdrawn: number } {
   const cashBalance = accountBalances.get(cashAssetId) ?? 0
-  if (cashBalance >= 0) return { brokerageWithdrawn: 0 }
+  if (cashBalance >= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0 }
 
   const order: AssetType[] = primaryAge < 60
     ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
@@ -64,6 +65,7 @@ export function applyWaterfall(
 
   let remaining = -cashBalance
   let brokerageWithdrawn = 0
+  let traditionalWithdrawn = 0
   for (const assetType of order) {
     if (remaining <= 0) break
     for (const asset of householdAssets.filter((a) => a.type === assetType)) {
@@ -72,12 +74,13 @@ export function applyWaterfall(
       const withdrawal = Math.min(balance, remaining)
       accountBalances.set(asset.id, balance - withdrawal)
       if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
+      if (assetType === 'retirementTraditional') traditionalWithdrawn += withdrawal
       remaining -= withdrawal
     }
   }
   // If all sources exhausted, remaining deficit stays as negative cash → depleted trips
   accountBalances.set(cashAssetId, remaining > 0 ? -remaining : 0)
-  return { brokerageWithdrawn }
+  return { brokerageWithdrawn, traditionalWithdrawn }
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
@@ -214,27 +217,46 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
 
     // 3. Withdrawal waterfall
     let brokerageWithdrawn = 0
+    let traditionalWithdrawn = 0
     if (cashAsset) {
-      ;({ brokerageWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge))
+      ;({ brokerageWithdrawn, traditionalWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge))
     }
 
     if (brokerageWithdrawn > 0) {
       incomeBreakdown.push({ label: 'Capital Gains (Taxable Brokerage)', amount: brokerageWithdrawn })
     }
+    if (traditionalWithdrawn > 0) {
+      incomeBreakdown.push({ label: 'Traditional IRA Withdrawal', amount: traditionalWithdrawn })
+    }
 
     // 3b. Investment taxes: capital gains on brokerage liquidations + NIIT on all NII
+    const baseOrdinaryIncome = wageIncome + interestIncome + taxableSs
     const capitalGainsTax = calculateCapitalGainsTax(
       brokerageWithdrawn,
-      wageIncome + interestIncome + taxableSs,
+      baseOrdinaryIncome,
       filingStatus,
     )
-    const magi = wageIncome + interestIncome + taxableSs + brokerageWithdrawn
+    // Traditional IRA distributions increase MAGI (affecting NIIT threshold) but are not NII themselves
+    const magi = baseOrdinaryIncome + brokerageWithdrawn + traditionalWithdrawn
     const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
     const stateCapitalGainsTax = calculateStateTax(brokerageWithdrawn, primaryState, filingStatus)
-    const investmentTaxes = capitalGainsTax + niit + stateCapitalGainsTax
-    if (cashAsset && investmentTaxes > 0) {
+
+    // 3c. Traditional IRA withdrawal — taxed as ordinary income (incremental, stacks on top of existing income)
+    const traditionalIraFederalTax = traditionalWithdrawn > 0
+      ? calculateFederalTax(baseOrdinaryIncome + traditionalWithdrawn, filingStatus)
+        - calculateFederalTax(baseOrdinaryIncome, filingStatus)
+      : 0
+    const baseStateIncome = wageIncome + interestIncome
+    const traditionalIraStateTax = traditionalWithdrawn > 0
+      ? calculateStateTax(baseStateIncome + traditionalWithdrawn, primaryState, filingStatus)
+        - calculateStateTax(baseStateIncome, primaryState, filingStatus)
+      : 0
+    const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
+
+    const postWaterfallTaxes = capitalGainsTax + niit + stateCapitalGainsTax + traditionalIraTax
+    if (cashAsset && postWaterfallTaxes > 0) {
       const prev = accountBalances.get(cashAsset.id) ?? 0
-      accountBalances.set(cashAsset.id, prev - investmentTaxes)
+      accountBalances.set(cashAsset.id, prev - postWaterfallTaxes)
     }
 
     // 4. Apply appreciation to all accounts
@@ -263,6 +285,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       federalIncomeTax,
       capitalGainsTax,
       niit,
+      traditionalIraTax,
       ficaTax,
       stateIncomeTax: stateIncomeTax + stateCapitalGainsTax,
       expenses: expenseTotal,
