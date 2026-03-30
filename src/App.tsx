@@ -34,11 +34,23 @@ export default function App() {
     ...DEFAULT_CONFIG,
     ...rawConfig,
     assetRates: { ...DEFAULT_CONFIG.assetRates, ...rawConfig.assetRates },
-    householdAssets: rawConfig.householdAssets?.length
-      ? rawConfig.householdAssets.some((a) => a.type === 'cash')
-        ? rawConfig.householdAssets
-        : [DEFAULT_CONFIG.householdAssets[0], ...rawConfig.householdAssets]
-      : DEFAULT_CONFIG.householdAssets,
+    householdAssets: (() => {
+      const assets = rawConfig.householdAssets?.length
+        ? rawConfig.householdAssets.some((a) => a.type === 'cash')
+          ? rawConfig.householdAssets
+          : [DEFAULT_CONFIG.householdAssets[0], ...rawConfig.householdAssets]
+        : DEFAULT_CONFIG.householdAssets
+      // Migrate flat annualContribution → contributions array
+      return assets.map((a) => ({
+        ...a,
+        contributions: a.contributions ??
+          ((a as any).annualContribution > 0
+            ? [{ id: `${a.id}-0`, startAge: 0, endAge: undefined, annualAmount: (a as any).annualContribution }]
+            : []),
+      }))
+    })(),
+    // Ensure incomeType is set on all existing income sources (migration)
+    incomeSources: (rawConfig.incomeSources ?? []).map((s) => ({ incomeType: 'wage' as const, ...s })),
   }
   const config: AppConfig = merged
   const [tab, setTab] = useLocalStorage<Tab>('hlwil-tab', 'household')

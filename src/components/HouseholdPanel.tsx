@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import type { AppConfig, HouseholdMember, IncomeSource, HouseholdAsset, AssetType, Expense, Frequency } from '../types'
+import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, Frequency } from '../types'
 import { ASSET_TYPE_LABELS, ADDABLE_ASSET_TYPES } from '../types'
 import { US_STATES } from '../lib/states'
 import CurrencyInput from './CurrencyInput'
 import { useLocalStorage } from '../hooks/useLocalStorage'
+import { estimateSsBenefit } from '../lib/ssEstimate'
 
 interface Props {
   config: AppConfig
@@ -53,15 +54,25 @@ export default function HouseholdPanel({ config, onChange }: Props) {
   }
 
   // --- Income sources ---
-  function addIncome(memberId: string, member: HouseholdMember) {
+  function memberWageSalary(memberId: string): number {
+    return config.incomeSources
+      .filter((s) => s.memberId === memberId && s.incomeType !== 'socialSecurity')
+      .reduce((sum, s) => sum + s.annualAmount, 0)
+  }
+
+  function addIncome(memberId: string, member: HouseholdMember, type: IncomeSourceType = 'wage') {
+    const isSS = type === 'socialSecurity'
+    const startAge = isSS ? 67 : member.ageAtSimulationStart
+    const annualAmount = isSS ? estimateSsBenefit(memberWageSalary(memberId), startAge) : 0
     const src: IncomeSource = {
       id: uid(),
       memberId,
-      name: '',
-      startAge: member.ageAtSimulationStart,
-      annualAmount: 0,
+      incomeType: type,
+      name: isSS ? 'Social Security' : '',
+      startAge,
+      annualAmount,
       annualGrowthRate: 0.03,
-      endAge: member.retirementAge,
+      endAge: isSS ? undefined : member.retirementAge,
     }
     onChange({ ...config, incomeSources: [...config.incomeSources, src] })
   }
@@ -79,7 +90,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
   // --- Household assets ---
   function addAsset(type: AssetType) {
-    const asset: HouseholdAsset = { id: uid(), type, balanceAtSimulationStart: 0, annualContribution: 0 }
+    const asset: HouseholdAsset = { id: uid(), type, balanceAtSimulationStart: 0, contributions: [] }
     onChange({ ...config, householdAssets: [...config.householdAssets, asset] })
   }
 
@@ -92,6 +103,24 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
   function removeAsset(id: string) {
     onChange({ ...config, householdAssets: config.householdAssets.filter((a) => a.id !== id) })
+  }
+
+  function addContribution(assetId: string) {
+    const asset = config.householdAssets.find((a) => a.id === assetId)!
+    const newPeriod: ContributionPeriod = { id: uid(), startAge: 0, endAge: undefined, annualAmount: 0 }
+    updateAsset(assetId, { contributions: [...asset.contributions, newPeriod] })
+  }
+
+  function updateContribution(assetId: string, periodId: string, partial: Partial<ContributionPeriod>) {
+    const asset = config.householdAssets.find((a) => a.id === assetId)!
+    updateAsset(assetId, {
+      contributions: asset.contributions.map((c) => (c.id === periodId ? { ...c, ...partial } : c)),
+    })
+  }
+
+  function removeContribution(assetId: string, periodId: string) {
+    const asset = config.householdAssets.find((a) => a.id === assetId)!
+    updateAsset(assetId, { contributions: asset.contributions.filter((c) => c.id !== periodId) })
   }
 
   // --- Expenses ---
@@ -220,7 +249,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium text-gray-700">Income Sources</span>
                   <button
-                    onClick={() => addIncome(member.id, member)}
+                    onClick={() => addIncome(member.id, member, 'wage')}
                     className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
                   >
                     + Add income
@@ -234,75 +263,128 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                 {/* Column headers */}
                 {memberIncome.length > 0 && (
                   <div className="grid grid-cols-12 gap-2 px-1 mb-1">
+                    <span className="col-span-2 text-xs text-gray-400">Type</span>
                     <span className="col-span-3 text-xs text-gray-400">Name</span>
-                    <span className="col-span-2 text-xs text-gray-400">Annual Amount</span>
-                    <span className="col-span-2 text-xs text-gray-400">Annual Growth</span>
-                    <span className="col-span-2 text-xs text-gray-400">Start Age</span>
-                    <span className="col-span-2 text-xs text-gray-400">End Age</span>
+                    <span className="col-span-3 text-xs text-gray-400">Annual Amount</span>
+                    <span className="col-span-1 text-xs text-gray-400">Annual Growth</span>
+                    <span className="col-span-1 text-xs text-gray-400">Start Age</span>
+                    <span className="col-span-1 text-xs text-gray-400">End Age</span>
                     <span className="col-span-1" />
                   </div>
                 )}
 
-                {memberIncome.map((src) => (
-                  <div key={src.id} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded p-2">
-                    <input
-                      className="col-span-3 input"
-                      placeholder="e.g. Salary"
-                      value={src.name}
-                      onChange={(e) => updateIncome(src.id, { name: e.target.value })}
-                    />
+                {memberIncome.map((src) => {
+                  const isSS = src.incomeType === 'socialSecurity'
+                  const ssEstimate = isSS
+                    ? estimateSsBenefit(memberWageSalary(member.id), src.startAge)
+                    : 0
+                  return (
+                    <div key={src.id} className="space-y-1">
+                      <div className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded p-2">
+                        {/* Type badge */}
+                        <div className="col-span-2">
+                          <select
+                            className="input text-xs w-full px-1"
+                            value={src.incomeType ?? 'wage'}
+                            onChange={(e) => {
+                              const newType = e.target.value as IncomeSourceType
+                              const updates: Partial<IncomeSource> = { incomeType: newType }
+                              if (newType === 'socialSecurity') {
+                                updates.startAge = member.retirementAge
+                                updates.endAge = undefined
+                              }
+                              updateIncome(src.id, updates)
+                            }}
+                          >
+                            <option value="wage">Wage</option>
+                            <option value="socialSecurity">Social Security</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </div>
 
-                    <div className="col-span-2">
-                      <CurrencyInput
-                        value={src.annualAmount}
-                        onChange={(v) => updateIncome(src.id, { annualAmount: v })}
-                      />
-                    </div>
+                        <input
+                          className="col-span-3 input"
+                          placeholder={isSS ? 'Social Security' : 'e.g. Salary'}
+                          value={src.name}
+                          onChange={(e) => updateIncome(src.id, { name: e.target.value })}
+                        />
 
-                    <div className="col-span-2 relative">
-                      <input
-                        type="number"
-                        className="input pr-5 w-full"
-                        placeholder="0.0"
-                        step="0.1"
-                        value={src.annualGrowthRate !== 0 ? (src.annualGrowthRate * 100).toFixed(1) : ''}
-                        onChange={(e) => updateIncome(src.id, { annualGrowthRate: (parseFloat(e.target.value) || 0) / 100 })}
-                      />
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">%</span>
-                    </div>
+                        <div className="col-span-3">
+                          <CurrencyInput
+                            value={src.annualAmount}
+                            onChange={(v) => updateIncome(src.id, { annualAmount: v })}
+                          />
+                        </div>
 
-                    <input
-                      type="number"
-                      className="col-span-2 input"
-                      placeholder={String(member.ageAtSimulationStart)}
-                      value={src.startAge || ''}
-                      onChange={(e) => updateIncome(src.id, { startAge: parseInt(e.target.value) || 0 })}
-                    />
+                        {/* Annual growth — hidden for SS (uses COLA from assumptions) */}
+                        {isSS ? (
+                          <div className="col-span-1 flex items-center pl-1">
+                            <span className="text-xs text-gray-400 italic">SS COLA</span>
+                          </div>
+                        ) : (
+                          <div className="col-span-1 relative">
+                            <input
+                              type="number"
+                              className="input pr-5 w-full"
+                              placeholder="0.0"
+                              step="0.1"
+                              value={src.annualGrowthRate !== 0 ? (src.annualGrowthRate * 100).toFixed(1) : ''}
+                              onChange={(e) => updateIncome(src.id, { annualGrowthRate: (parseFloat(e.target.value) || 0) / 100 })}
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">%</span>
+                          </div>
+                        )}
 
-                    <div className="col-span-2">
-                      <input
-                        type="number"
-                        className={`input w-full ${src.endAge !== undefined && src.endAge < src.startAge ? 'border-red-400 focus:ring-red-400' : ''}`}
-                        placeholder={String(member.retirementAge)}
-                        value={src.endAge ?? ''}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          updateIncome(src.id, { endAge: val === '' ? undefined : parseInt(val) || undefined })
-                        }}
-                      />
-                      {src.endAge !== undefined && src.endAge < src.startAge && (
-                        <p className="text-red-500 text-xs mt-0.5">Must be ≥ start age ({src.startAge})</p>
+                        <input
+                          type="number"
+                          className="col-span-1 input"
+                          placeholder={isSS ? '67' : String(member.ageAtSimulationStart)}
+                          value={src.startAge || ''}
+                          onChange={(e) => updateIncome(src.id, { startAge: parseInt(e.target.value) || 0 })}
+                        />
+
+                        <div className="col-span-1">
+                          <input
+                            type="number"
+                            disabled={isSS}
+                            className={`input w-full ${isSS ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''} ${!isSS && src.endAge !== undefined && src.endAge < src.startAge ? 'border-red-400 focus:ring-red-400' : ''}`}
+                            placeholder={isSS ? 'N/A' : String(member.retirementAge)}
+                            value={src.endAge ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              updateIncome(src.id, { endAge: val === '' ? undefined : parseInt(val) || undefined })
+                            }}
+                          />
+                          {!isSS && src.endAge !== undefined && src.endAge < src.startAge && (
+                            <p className="text-red-500 text-xs mt-0.5">Must be ≥ start age ({src.startAge})</p>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => removeIncome(src.id)}
+                          className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      {/* SS estimate hint */}
+                      {isSS && (
+                        <div className="flex items-center gap-2 px-2 pb-1">
+                          <span className="text-xs text-gray-400">
+                            Estimated at age {src.startAge}: {fmt.format(ssEstimate)}/yr
+                          </span>
+                          <button
+                            onClick={() => updateIncome(src.id, { annualAmount: ssEstimate })}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 underline decoration-dashed"
+                          >
+                            ↻ Use estimate
+                          </button>
+                        </div>
                       )}
                     </div>
-
-                    <button
-                      onClick={() => removeIncome(src.id)}
-                      className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
+                  )
+                })}
 
                 {memberIncome.length > 0 && (
                   <p className="text-xs text-gray-400 pt-1">
@@ -356,8 +438,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
             {/* Column headers */}
             <div className="grid grid-cols-12 gap-2 px-1">
               <span className="col-span-5 text-xs text-gray-400">Account Type</span>
-              <span className="col-span-3 text-xs text-gray-400">Balance at Start</span>
-              <span className="col-span-3 text-xs text-gray-400">Annual Contribution</span>
+              <span className="col-span-6 text-xs text-gray-400">Balance at Start</span>
               <span className="col-span-1" />
             </div>
 
@@ -368,14 +449,11 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   <span className="text-sm font-medium text-indigo-700">{ASSET_TYPE_LABELS.cash}</span>
                   <span className="text-xs text-indigo-400 bg-indigo-100 rounded px-1.5 py-0.5">primary</span>
                 </div>
-                <div className="col-span-3">
+                <div className="col-span-6">
                   <CurrencyInput
                     value={cashAsset.balanceAtSimulationStart}
                     onChange={(v) => updateAsset(cashAsset.id, { balanceAtSimulationStart: v })}
                   />
-                </div>
-                <div className="col-span-3 flex items-center pl-2 text-xs text-gray-400 italic">
-                  Dynamic (net cash flow)
                 </div>
                 <div className="col-span-1" />
               </div>
@@ -383,28 +461,85 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
             {/* Other accounts */}
             {nonCashAssets.map((asset) => (
-              <div key={asset.id} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded p-2">
-                <div className="col-span-5 text-sm text-gray-700">
-                  {ASSET_TYPE_LABELS[asset.type]}
+              <div key={asset.id} className="bg-gray-50 rounded p-2 space-y-2">
+                {/* Account header row */}
+                <div className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5 text-sm text-gray-700">
+                    {ASSET_TYPE_LABELS[asset.type]}
+                  </div>
+                  <div className="col-span-6">
+                    <CurrencyInput
+                      value={asset.balanceAtSimulationStart}
+                      onChange={(v) => updateAsset(asset.id, { balanceAtSimulationStart: v })}
+                    />
+                  </div>
+                  <button
+                    onClick={() => removeAsset(asset.id)}
+                    className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
+                  >
+                    ×
+                  </button>
                 </div>
-                <div className="col-span-3">
-                  <CurrencyInput
-                    value={asset.balanceAtSimulationStart}
-                    onChange={(v) => updateAsset(asset.id, { balanceAtSimulationStart: v })}
-                  />
+
+                {/* Contribution periods */}
+                <div className="pl-2 border-l-2 border-gray-200 ml-1 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400 font-medium">Contribution Periods</span>
+                    <button
+                      onClick={() => addContribution(asset.id)}
+                      className="text-xs text-indigo-500 hover:text-indigo-700"
+                    >
+                      + Add period
+                    </button>
+                  </div>
+
+                  {asset.contributions.length === 0 && (
+                    <p className="text-xs text-gray-400 italic py-0.5">No contributions.</p>
+                  )}
+
+                  {asset.contributions.length > 0 && (
+                    <div className="grid grid-cols-12 gap-2 px-1">
+                      <span className="col-span-3 text-xs text-gray-400">Start Age</span>
+                      <span className="col-span-3 text-xs text-gray-400">End Age</span>
+                      <span className="col-span-5 text-xs text-gray-400">Annual Amount</span>
+                      <span className="col-span-1" />
+                    </div>
+                  )}
+
+                  {asset.contributions.map((period) => (
+                    <div key={period.id} className="grid grid-cols-12 gap-2 items-center">
+                      <input
+                        type="number"
+                        className="col-span-3 input"
+                        placeholder="0"
+                        value={period.startAge || ''}
+                        onChange={(e) => updateContribution(asset.id, period.id, { startAge: parseInt(e.target.value) || 0 })}
+                      />
+                      <input
+                        type="number"
+                        className="col-span-3 input"
+                        placeholder="End of sim"
+                        value={period.endAge ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          updateContribution(asset.id, period.id, { endAge: val === '' ? undefined : parseInt(val) || undefined })
+                        }}
+                      />
+                      <div className="col-span-5">
+                        <CurrencyInput
+                          value={period.annualAmount}
+                          onChange={(v) => updateContribution(asset.id, period.id, { annualAmount: v })}
+                        />
+                      </div>
+                      <button
+                        onClick={() => removeContribution(asset.id, period.id)}
+                        className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <div className="col-span-3">
-                  <CurrencyInput
-                    value={asset.annualContribution}
-                    onChange={(v) => updateAsset(asset.id, { annualContribution: v })}
-                  />
-                </div>
-                <button
-                  onClick={() => removeAsset(asset.id)}
-                  className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
-                >
-                  ×
-                </button>
               </div>
             ))}
 

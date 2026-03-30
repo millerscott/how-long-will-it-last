@@ -37,12 +37,12 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
     <div className="border border-gray-200 rounded-lg">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg transition-colors text-left"
+        className="w-full flex items-start gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg transition-colors text-left"
       >
-        <span className={`text-gray-400 transition-transform duration-200 text-xs ${open ? 'rotate-90' : ''}`}>▶</span>
+        <span className={`text-gray-400 transition-transform duration-200 text-xs mt-0.5 shrink-0 ${open ? 'rotate-90' : ''}`}>▶</span>
         <span className="text-sm font-semibold text-gray-700 shrink-0">Assumptions</span>
         {!open && (
-          <span className="text-xs text-gray-400 truncate">{summary}</span>
+          <span className="text-xs text-gray-400">{summary}</span>
         )}
       </button>
 
@@ -56,6 +56,11 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                 label="Inflation Rate"
                 value={config.inflationRate}
                 onChange={(v) => update({ inflationRate: v })}
+              />
+              <PercentField
+                label="Social Security COLA"
+                value={config.ssCola}
+                onChange={(v) => update({ ssCola: v })}
               />
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Max Years to Run Simulation</label>

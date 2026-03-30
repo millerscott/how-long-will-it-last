@@ -6,15 +6,18 @@ export interface HouseholdMember {
   state: string
 }
 
+export type IncomeSourceType = 'wage' | 'socialSecurity' | 'other'
+
 export interface IncomeSource {
   id: string
   memberId: string
   name: string
+  incomeType?: IncomeSourceType
   /** Age at which this income begins */
   startAge: number
   /** Annual amount in base (simulation start) year dollars */
   annualAmount: number
-  /** Expected annual growth rate, e.g. 0.03 for 3% */
+  /** Expected annual growth rate, e.g. 0.03 for 3%. Ignored for socialSecurity (uses ssCola). */
   annualGrowthRate: number
   /** Age at which income ends. If omitted, ends at the member's retirementAge */
   endAge?: number
@@ -56,11 +59,18 @@ export const ADDABLE_ASSET_TYPES: AssetType[] = [
   'educationSavings529',
 ]
 
+export interface ContributionPeriod {
+  id: string
+  startAge: number
+  endAge?: number
+  annualAmount: number
+}
+
 export interface HouseholdAsset {
   id: string
   type: AssetType
   balanceAtSimulationStart: number
-  annualContribution: number
+  contributions: ContributionPeriod[]
 }
 
 export interface AssetRates {
@@ -75,6 +85,7 @@ export interface AssetRates {
 export interface AppConfig {
   household: HouseholdMember[]
   inflationRate: number
+  ssCola: number
   simulationYears: number
   incomeSources: IncomeSource[]
   expenses: Expense[]
@@ -85,11 +96,12 @@ export interface AppConfig {
 export const DEFAULT_CONFIG: AppConfig = {
   household: [],
   inflationRate: 0.03,
+  ssCola: 0.025,
   simulationYears: 60,
   incomeSources: [],
   expenses: [],
   householdAssets: [
-    { id: 'default-cash', type: 'cash', balanceAtSimulationStart: 0, annualContribution: 0 },
+    { id: 'default-cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
   ],
   assetRates: {
     cash: 0,

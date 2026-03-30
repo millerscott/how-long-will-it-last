@@ -119,6 +119,44 @@ export function calculateAdditionalMedicare(
 }
 
 // ---------------------------------------------------------------------------
+// Social Security taxability (IRS provisional income rules)
+// ---------------------------------------------------------------------------
+
+const SS_PROVISIONAL_THRESHOLDS: Record<FilingStatus, { lower: number; upper: number }> = {
+  single:               { lower: 25_000, upper: 34_000 },
+  marriedFilingJointly: { lower: 32_000, upper: 44_000 },
+}
+
+/**
+ * Returns the taxable portion of Social Security benefits.
+ * provisionalIncome = otherIncome + 0.5 × ssIncome
+ * - Below lower threshold: 0% taxable
+ * - Between thresholds: up to 50% of excess above lower threshold
+ * - Above upper threshold: up to 85% of SS benefits
+ */
+export function calculateTaxableSocialSecurity(
+  otherIncome: number,
+  ssIncome: number,
+  filingStatus: FilingStatus,
+): number {
+  if (ssIncome <= 0) return 0
+  const { lower, upper } = SS_PROVISIONAL_THRESHOLDS[filingStatus]
+  const provisional = otherIncome + 0.5 * ssIncome
+
+  if (provisional <= lower) return 0
+
+  if (provisional <= upper) {
+    // 50% of excess above lower threshold, capped at 50% of SS
+    return Math.min(0.5 * (provisional - lower), 0.5 * ssIncome)
+  }
+
+  // Above upper threshold: min of (85% of SS) or (50% of middle band + 85% of excess above upper)
+  const midBand = 0.5 * (upper - lower)
+  const aboveUpper = 0.85 * (provisional - upper)
+  return Math.min(0.85 * ssIncome, midBand + aboveUpper)
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — add more states here as needed
 // ---------------------------------------------------------------------------
 

@@ -4,6 +4,7 @@ import {
   calculateStateTax,
   calculateFicaPerEarner,
   calculateAdditionalMedicare,
+  calculateTaxableSocialSecurity,
 } from './tax'
 
 // ---------------------------------------------------------------------------
@@ -257,5 +258,72 @@ describe('calculateAdditionalMedicare', () => {
     const wages = 220_000
     expect(calculateAdditionalMedicare(wages, 'single'))
       .toBeGreaterThan(calculateAdditionalMedicare(wages, 'marriedFilingJointly'))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Social Security taxability (provisional income rules)
+// Single thresholds: $25k lower / $34k upper
+// MFJ thresholds:    $32k lower / $44k upper
+// ---------------------------------------------------------------------------
+
+describe('calculateTaxableSocialSecurity', () => {
+  it('returns 0 when SS income is 0', () => {
+    expectDollars(calculateTaxableSocialSecurity(50_000, 0, 'single'), 0)
+  })
+
+  it('returns 0 when provisional income is below the lower threshold (single)', () => {
+    // provisional = 20,000 + 0.5 × 8,000 = 24,000 < 25,000
+    expectDollars(calculateTaxableSocialSecurity(20_000, 8_000, 'single'), 0)
+  })
+
+  it('returns 0 at exactly the lower threshold (single)', () => {
+    // provisional = 21,000 + 0.5 × 8,000 = 25,000
+    expectDollars(calculateTaxableSocialSecurity(21_000, 8_000, 'single'), 0)
+  })
+
+  it('begins taxing $1 above the lower threshold (single)', () => {
+    // provisional = 21,001 + 0.5 × 8,000 = 25,001 → taxable = min(0.5 × 1, 0.5 × 8,000) = 0.50
+    expectDollars(calculateTaxableSocialSecurity(21_001, 8_000, 'single'), 0.50)
+  })
+
+  it('caps at 50% of SS in the middle tier (single)', () => {
+    // provisional = 28,000 + 0.5 × 6,000 = 31,000 (between 25k and 34k)
+    // taxable = min(0.5 × (31,000 - 25,000), 0.5 × 6,000) = min(3,000, 3,000) = 3,000
+    expectDollars(calculateTaxableSocialSecurity(28_000, 6_000, 'single'), 3_000)
+  })
+
+  it('applies 85% tier above the upper threshold (single)', () => {
+    // provisional = 40,000 + 0.5 × 20,000 = 50,000 > 34,000
+    // midBand = 0.5 × (34,000 - 25,000) = 4,500
+    // aboveUpper = 0.85 × (50,000 - 34,000) = 13,600
+    // taxable = min(0.85 × 20,000, 4,500 + 13,600) = min(17,000, 18,100) = 17,000
+    expectDollars(calculateTaxableSocialSecurity(40_000, 20_000, 'single'), 17_000)
+  })
+
+  it('returns 0 when provisional income is below the lower MFJ threshold', () => {
+    // provisional = 24,000 + 0.5 × 14,000 = 31,000 < 32,000
+    expectDollars(calculateTaxableSocialSecurity(24_000, 14_000, 'marriedFilingJointly'), 0)
+  })
+
+  it('begins taxing $1 above the lower MFJ threshold', () => {
+    // provisional = 25,001 + 0.5 × 14,000 = 32,001
+    // taxable = min(0.5 × 1, 0.5 × 14,000) = 0.50
+    expectDollars(calculateTaxableSocialSecurity(25_001, 14_000, 'marriedFilingJointly'), 0.50)
+  })
+
+  it('applies 85% tier above the upper MFJ threshold', () => {
+    // provisional = 50,000 + 0.5 × 30,000 = 65,000 > 44,000
+    // midBand = 0.5 × (44,000 - 32,000) = 6,000
+    // aboveUpper = 0.85 × (65,000 - 44,000) = 17,850
+    // taxable = min(0.85 × 30,000, 6,000 + 17,850) = min(25,500, 23,850) = 23,850
+    expectDollars(calculateTaxableSocialSecurity(50_000, 30_000, 'marriedFilingJointly'), 23_850)
+  })
+
+  it('MFJ lower threshold is higher than single lower threshold', () => {
+    // Same income should result in less SS being taxable for MFJ
+    const taxableSingle = calculateTaxableSocialSecurity(22_000, 8_000, 'single')
+    const taxableMfj = calculateTaxableSocialSecurity(22_000, 8_000, 'marriedFilingJointly')
+    expect(taxableSingle).toBeGreaterThan(taxableMfj)
   })
 })

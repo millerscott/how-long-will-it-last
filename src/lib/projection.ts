@@ -1,10 +1,11 @@
-import type { AppConfig } from '../types'
+import type { AppConfig, AssetType } from '../types'
 import { ASSET_TYPE_LABELS } from '../types'
 import {
   calculateFederalTax,
   calculateStateTax,
   calculateFicaPerEarner,
   calculateAdditionalMedicare,
+  calculateTaxableSocialSecurity,
   type FilingStatus,
 } from './tax'
 
@@ -13,10 +14,16 @@ export interface AssetBalance {
   balance: number
 }
 
+export interface IncomeBreakdownItem {
+  label: string
+  amount: number
+}
+
 export interface YearlySnapshot {
   age: number
   year: number
   income: number
+  incomeBreakdown: IncomeBreakdownItem[]
   federalIncomeTax: number
   ficaTax: number
   stateIncomeTax: number
@@ -28,7 +35,7 @@ export interface YearlySnapshot {
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
-  const { inflationRate, incomeSources, expenses, householdAssets, assetRates, household } = config
+  const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household } = config
 
   const primaryMember = household[0]
   if (!primaryMember) return []
@@ -53,40 +60,56 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const year = currentYear + yearsElapsed
 
     // --- Income (tracked per member for state tax purposes) ---
-    let income = 0
-    const incomeByMember = new Map<string, number>()
+    // SS income is tracked separately: different growth rate, different tax treatment, no FICA
+    let wageIncome = 0
+    let ssIncome = 0
+    const wageByMember = new Map<string, number>()
+    const incomeBreakdown: IncomeBreakdownItem[] = []
 
     for (const src of incomeSources) {
       const member = household.find((m) => m.id === src.memberId)
       if (!member) continue
       const memberAge = member.ageAtSimulationStart + yearsElapsed
-      const effectiveEndAge = src.endAge ?? member.retirementAge
+      const effectiveEndAge = src.endAge ?? simulationEndAge
       if (memberAge < src.startAge || memberAge > effectiveEndAge) continue
       const yearsOfGrowth = memberAge - member.ageAtSimulationStart
-      const amount = src.annualAmount * Math.pow(1 + src.annualGrowthRate, yearsOfGrowth)
-      income += amount
-      incomeByMember.set(src.memberId, (incomeByMember.get(src.memberId) ?? 0) + amount)
+      const isSS = src.incomeType === 'socialSecurity'
+      const growthRate = isSS ? ssCola : src.annualGrowthRate
+      const amount = src.annualAmount * Math.pow(1 + growthRate, yearsOfGrowth)
+      incomeBreakdown.push({ label: src.name, amount })
+      if (isSS) {
+        ssIncome += amount
+      } else {
+        wageIncome += amount
+        wageByMember.set(src.memberId, (wageByMember.get(src.memberId) ?? 0) + amount)
+      }
     }
+
+    const income = wageIncome + ssIncome
 
     // --- Taxes ---
-    const federalIncomeTax = calculateFederalTax(income, filingStatus)
+    // Federal: SS benefits are partially taxable based on provisional income
+    const taxableSs = calculateTaxableSocialSecurity(wageIncome, ssIncome, filingStatus)
+    const federalIncomeTax = calculateFederalTax(wageIncome + taxableSs, filingStatus)
 
-    let ficaTax = calculateAdditionalMedicare(income, filingStatus)
-    for (const memberIncome of incomeByMember.values()) {
-      ficaTax += calculateFicaPerEarner(memberIncome)
+    // FICA: applied only to wage income, not SS
+    let ficaTax = calculateAdditionalMedicare(wageIncome, filingStatus)
+    for (const memberWages of wageByMember.values()) {
+      ficaTax += calculateFicaPerEarner(memberWages)
     }
 
+    // State tax: Oregon does not tax SS benefits — pass only wage income
     const statesWithIncome = new Set(
-      [...incomeByMember.keys()].map((id) => household.find((m) => m.id === id)!.state)
+      [...wageByMember.keys()].map((id) => household.find((m) => m.id === id)!.state)
     )
     let stateIncomeTax = 0
     if (statesWithIncome.size === 1) {
       const state = [...statesWithIncome][0]
-      stateIncomeTax = calculateStateTax(income, state, filingStatus)
+      stateIncomeTax = calculateStateTax(wageIncome, state, filingStatus)
     } else {
-      for (const [memberId, memberIncome] of incomeByMember) {
+      for (const [memberId, memberWages] of wageByMember) {
         const member = household.find((m) => m.id === memberId)!
-        stateIncomeTax += calculateStateTax(memberIncome, member.state, filingStatus)
+        stateIncomeTax += calculateStateTax(memberWages, member.state, filingStatus)
       }
     }
 
@@ -104,13 +127,20 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const netCashFlow = income - federalIncomeTax - ficaTax - stateIncomeTax - expenseTotal
 
     // --- Update account balances ---
-    // 1. Contributions move from cash to each non-cash account
+    // 1. Contributions: apply the active period's amount for each non-cash account
+    const primaryAge = currentAge + yearsElapsed
     let totalContributions = 0
     for (const asset of householdAssets) {
       if (asset.type === 'cash') continue
-      const prev = accountBalances.get(asset.id) ?? 0
-      accountBalances.set(asset.id, prev + asset.annualContribution)
-      totalContributions += asset.annualContribution
+      const activePeriod = asset.contributions.find(
+        (c) => primaryAge >= c.startAge && (c.endAge === undefined || primaryAge <= c.endAge)
+      )
+      const contribution = activePeriod?.annualAmount ?? 0
+      if (contribution > 0) {
+        const prev = accountBalances.get(asset.id) ?? 0
+        accountBalances.set(asset.id, prev + contribution)
+        totalContributions += contribution
+      }
     }
 
     // 2. Net cash flow (minus contributions) settles into cash
@@ -119,7 +149,35 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       accountBalances.set(cashAsset.id, prev + netCashFlow - totalContributions)
     }
 
-    // 3. Apply appreciation to all accounts
+    // 3. Withdrawal waterfall: if cash is negative, draw from other accounts in
+    //    tax-optimal order. Before 60: Roth before Traditional (Roth withdrawals
+    //    are cheaper when both carry the early-withdrawal penalty). At 60+:
+    //    Traditional before Roth (preserve tax-free Roth growth longer).
+    //    NOTE: Traditional withdrawals would normally increase taxable income;
+    //    this model does not do withdrawal-level tax attribution.
+    if (cashAsset) {
+      const cashBalance = accountBalances.get(cashAsset.id) ?? 0
+      if (cashBalance < 0) {
+        const WATERFALL_ORDER: AssetType[] = primaryAge < 60
+          ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
+          : ['moneyMarketSavings', 'taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529']
+        let remaining = -cashBalance
+        for (const assetType of WATERFALL_ORDER) {
+          if (remaining <= 0) break
+          for (const asset of householdAssets.filter((a) => a.type === assetType)) {
+            if (remaining <= 0) break
+            const balance = accountBalances.get(asset.id) ?? 0
+            const withdrawal = Math.min(balance, remaining)
+            accountBalances.set(asset.id, balance - withdrawal)
+            remaining -= withdrawal
+          }
+        }
+        // If all sources exhausted, remaining deficit stays as negative cash → depleted trips
+        accountBalances.set(cashAsset.id, -remaining)
+      }
+    }
+
+    // 4. Apply appreciation to all accounts
     for (const asset of householdAssets) {
       const rate = assetRates[asset.type]
       const balance = accountBalances.get(asset.id) ?? 0
@@ -141,6 +199,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       age,
       year,
       income,
+      incomeBreakdown,
       federalIncomeTax,
       ficaTax,
       stateIncomeTax,
