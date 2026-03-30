@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { projectFinances, findDepletionAge, applyWaterfall } from './projection'
-import type { AppConfig, HouseholdMember, HouseholdAsset } from '../types'
+import { projectFinances, findDepletionAge, applyWaterfall, draw529ForEducation } from './projection'
+import type { AppConfig, HouseholdMember, HouseholdAsset, RegularExpense, PeriodicExpense, EducationExpense } from '../types'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -148,7 +148,7 @@ describe('projectFinances', () => {
 
   it('annual expense reduces net cash flow each year', () => {
     const result = projectFinances(baseConfig({
-      expenses: [{ id: 'e1', name: 'Rent', amount: 12_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Rent', amount: 12_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
     }))
     expect(result[0].expenses).toBe(12_000)
     expect(result[5].expenses).toBe(12_000) // no inflation
@@ -156,7 +156,7 @@ describe('projectFinances', () => {
 
   it('monthly expense is annualised (×12)', () => {
     const result = projectFinances(baseConfig({
-      expenses: [{ id: 'e1', name: 'Rent', amount: 1_000, frequency: 'monthly', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Rent', amount: 1_000, expenseType: 'regular' as const, frequency: 'monthly', inflationAdjusted: false }],
     }))
     expect(result[0].expenses).toBe(12_000)
   })
@@ -164,7 +164,7 @@ describe('projectFinances', () => {
   it('inflation-adjusted expense grows at inflationRate', () => {
     const result = projectFinances(baseConfig({
       inflationRate: 0.05,
-      expenses: [{ id: 'e1', name: 'Rent', amount: 10_000, frequency: 'annual', inflationAdjusted: true }],
+      expenses: [{ id: 'e1', name: 'Rent', amount: 10_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: true }],
     }))
     expect(result[0].expenses).toBeCloseTo(10_000)
     expect(result[1].expenses).toBeCloseTo(10_500)
@@ -229,7 +229,7 @@ describe('projectFinances', () => {
     const result = projectFinances(baseConfig({
       simulationYears: 5,
       householdAssets: cashOnly(20_000),
-      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
     }))
     expect(result[0].depleted).toBe(false) // age 50: $10k remaining
     expect(result[1].depleted).toBe(true)  // age 51: exactly $0
@@ -239,7 +239,7 @@ describe('projectFinances', () => {
     const result = projectFinances(baseConfig({
       simulationYears: 5,
       householdAssets: cashOnly(5_000),
-      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
     }))
     const depletedIdx = result.findIndex((s) => s.depleted)
     expect(depletedIdx).toBeGreaterThan(-1)
@@ -250,7 +250,7 @@ describe('projectFinances', () => {
     const result = projectFinances(baseConfig({
       simulationYears: 5,
       householdAssets: cashOnly(0),
-      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
     }))
     expect(result.every((s) => s.totalAssets >= 0)).toBe(true)
   })
@@ -267,7 +267,7 @@ describe('projectFinances', () => {
     const result = projectFinances(baseConfig({
       simulationYears: 10,
       householdAssets: cashOnly(30_000),
-      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 10_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
     }))
     // $30k cash, $10k/yr: 50→20k, 51→10k, 52→0 → depleted at age 52
     expect(findDepletionAge(result)).toBe(52)
@@ -348,7 +348,7 @@ describe('projectFinances', () => {
         { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
         { id: 'trad', type: 'retirementTraditional', balanceAtSimulationStart: 100_000, contributions: [] },
       ],
-      expenses: [{ id: 'e1', name: 'Exp', amount: 20_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 20_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
       assetRates: ZERO_RATES,
     }))
     expect(result[0].traditionalIraTax).toBeCloseTo(390)
@@ -366,7 +366,7 @@ describe('projectFinances', () => {
         { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
         { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 50_000, contributions: [] },
       ],
-      expenses: [{ id: 'e1', name: 'Exp', amount: 20_000, frequency: 'annual', inflationAdjusted: false }],
+      expenses: [{ id: 'e1', name: 'Exp', amount: 20_000, expenseType: 'regular' as const, frequency: 'annual', inflationAdjusted: false }],
       assetRates: ZERO_RATES,
     }))
     // After waterfall, brokerage withdrawn = $20k; low ordinary income → 0% LTCG
@@ -485,5 +485,429 @@ describe('applyWaterfall', () => {
     expect(result.brokerageWithdrawn).toBe(12_000)
     expect(balances.get('brok1')).toBe(0)
     expect(balances.get('brok2')).toBe(3_000)
+  })
+
+  // -------------------------------------------------------------------------
+  // Cash reserve
+  // -------------------------------------------------------------------------
+
+  it('cash with reserve: pulls from MM to reach cashTarget, not just zero', () => {
+    // annualExpenses = $60k → monthly = $5k → cashTarget = 2 × $5k = $10k
+    // cash = $5k (below target), MM = $20k → MM pulled to fund $5k gap
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const balances = makeBalances({ cash: 5_000, mm: 20_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('cash')).toBe(10_000)  // brought up to target
+    expect(balances.get('mm')).toBe(15_000)    // 5k withdrawn
+  })
+
+  it('cash with reserve: no waterfall when cash already meets target', () => {
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const balances = makeBalances({ cash: 15_000, mm: 20_000 })
+    const result = applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)  // target = $10k
+    expect(result.brokerageWithdrawn).toBe(0)
+    expect(balances.get('cash')).toBe(15_000)  // unchanged
+    expect(balances.get('mm')).toBe(20_000)    // unchanged
+  })
+
+  it('cash with reserve: negative cash + reserve target both included in pull', () => {
+    // annualExpenses = $120k → monthly = $10k → cashTarget = 1 × $10k = $10k
+    // cash = -$3k → total pull = $13k
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 1 },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const balances = makeBalances({ cash: -3_000, mm: 30_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 120_000)
+    expect(balances.get('cash')).toBe(10_000)
+    expect(balances.get('mm')).toBe(17_000)  // 13k pulled
+  })
+
+  it('cash with reserve: insolvency — cash ends negative when sources exhausted', () => {
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 3 },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    // target = $15k, cash = -$5k → need $20k; only $8k available in MM
+    const balances = makeBalances({ cash: -5_000, mm: 8_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('mm')).toBe(0)
+    expect(balances.get('cash')).toBe(3_000)  // -5k + 8k = 3k (below target, but all available was used)
+  })
+
+  // -------------------------------------------------------------------------
+  // MM reserve protection (source floor)
+  // -------------------------------------------------------------------------
+
+  it('MM with reserve: only above-floor amount is drainable', () => {
+    // MM at $20k with $15k reserve target → only $5k drainable; cash shortfall $8k → $3k from brokerage
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 3 },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    // annualExpenses = $60k → monthly = $5k → mmTarget = 3 × $5k = $15k
+    const balances = makeBalances({ cash: -8_000, mm: 20_000, brok: 10_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('cash')).toBe(0)
+    expect(balances.get('mm')).toBe(15_000)  // drained to floor, not below
+    expect(balances.get('brok')).toBe(7_000) // remaining 3k pulled from brokerage
+  })
+
+  it('MM with reserve at exactly its floor: contributes 0 to pull', () => {
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    // annualExpenses = $60k → mmTarget = $10k; MM balance exactly at target
+    const balances = makeBalances({ cash: -5_000, mm: 10_000, brok: 20_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('mm')).toBe(10_000)  // untouched
+    expect(balances.get('brok')).toBe(15_000)
+    expect(balances.get('cash')).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // MM top-up (destination)
+  // -------------------------------------------------------------------------
+
+  it('MM with reserve: waterfall fires even when cash is non-negative to top up MM', () => {
+    // Cash = $8k (positive, no reserve), MM = $5k with $10k target → pull $5k from brokerage → MM topped up
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    // annualExpenses = $60k → mmTarget = $10k
+    const balances = makeBalances({ cash: 8_000, mm: 5_000, brok: 50_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('mm')).toBe(10_000)  // topped up
+    expect(balances.get('cash')).toBe(8_000) // unchanged
+    expect(balances.get('brok')).toBe(45_000)// 5k pulled
+  })
+
+  // -------------------------------------------------------------------------
+  // Cash → MM distribution constraint
+  // -------------------------------------------------------------------------
+
+  it('cash stays at its target after pull: no transfer to MM', () => {
+    // cashTarget = $10k, mmTarget = $10k; both below target
+    // Total pull = $20k from brokerage
+    // After pull: cash = $0 + $20k... wait, let me think
+    // cash = $0, cashTarget = $10k; MM = $5k, mmTarget = $10k
+    // cashShortfall = $10k, mmTopUp = $5k → totalPull = $15k from brokerage
+    // After pull: cash = $0 + $15k = $15k
+    // Distribute: cashAvailable = $15k - $10k = $5k → transfer $5k to MM
+    // MM ends at $10k, cash ends at $10k
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    // annualExpenses = $60k → monthly = $5k → cashTarget = mmTarget = $10k
+    const balances = makeBalances({ cash: 0, mm: 5_000, brok: 50_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('cash')).toBe(10_000)
+    expect(balances.get('mm')).toBe(10_000)
+    expect(balances.get('brok')).toBe(35_000) // 15k pulled
+  })
+
+  it('partial MM top-up when pulled cash is only slightly above cashTarget', () => {
+    // cashTarget = $10k; MM target = $10k, MM balance = $3k (deficit $7k)
+    // cash = $8k → cashShortfall = $2k; mmTopUp = $7k → totalPull = $9k
+    // After pull: cash = $8k + $9k = $17k; cashAvailable for MM = $17k - $10k = $7k
+    // Transfer $7k to MM → MM = $10k, cash = $10k
+    const reserveAssets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 0, contributions: [], monthsReserve: 2 },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const balances = makeBalances({ cash: 8_000, mm: 3_000, brok: 50_000 })
+    applyWaterfall(balances, 'cash', reserveAssets, 50, 60_000)
+    expect(balances.get('cash')).toBe(10_000)
+    expect(balances.get('mm')).toBe(10_000)
+    expect(balances.get('brok')).toBe(41_000) // 9k pulled
+  })
+})
+
+// ---------------------------------------------------------------------------
+// draw529ForEducation — unit tests
+// ---------------------------------------------------------------------------
+
+describe('draw529ForEducation', () => {
+  it('returns 0 when amountNeeded is 0', () => {
+    const balances = new Map([['529a', 50_000]])
+    const assets: AppConfig['householdAssets'] = [
+      { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    expect(draw529ForEducation(balances, assets, 0)).toBe(0)
+    expect(balances.get('529a')).toBe(50_000)
+  })
+
+  it('returns 0 when amountNeeded is negative', () => {
+    const balances = new Map([['529a', 50_000]])
+    const assets: AppConfig['householdAssets'] = [
+      { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    expect(draw529ForEducation(balances, assets, -1000)).toBe(0)
+  })
+
+  it('draws from a single 529 with enough balance', () => {
+    const balances = new Map([['529a', 50_000]])
+    const assets: AppConfig['householdAssets'] = [
+      { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const drawn = draw529ForEducation(balances, assets, 20_000)
+    expect(drawn).toBe(20_000)
+    expect(balances.get('529a')).toBe(30_000)
+  })
+
+  it('returns less than amountNeeded when 529 runs out', () => {
+    const balances = new Map([['529a', 5_000]])
+    const assets: AppConfig['householdAssets'] = [
+      { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const drawn = draw529ForEducation(balances, assets, 20_000)
+    expect(drawn).toBe(5_000)
+    expect(balances.get('529a')).toBe(0)
+  })
+
+  it('drains first 529 before drawing from second', () => {
+    const balances = new Map([['529a', 8_000], ['529b', 15_000]])
+    const assets: AppConfig['householdAssets'] = [
+      { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+      { id: '529b', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const drawn = draw529ForEducation(balances, assets, 20_000)
+    expect(drawn).toBe(20_000)
+    expect(balances.get('529a')).toBe(0)
+    expect(balances.get('529b')).toBe(3_000)
+  })
+
+  it('returns total drawn when two 529s together are insufficient', () => {
+    const balances = new Map([['529a', 8_000], ['529b', 5_000]])
+    const assets: AppConfig['householdAssets'] = [
+      { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+      { id: '529b', type: 'educationSavings529', balanceAtSimulationStart: 0, contributions: [] },
+    ]
+    const drawn = draw529ForEducation(balances, assets, 20_000)
+    expect(drawn).toBe(13_000)
+    expect(balances.get('529a')).toBe(0)
+    expect(balances.get('529b')).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Expense types — age gating, periodic, education
+// ---------------------------------------------------------------------------
+
+describe('expense age gating', () => {
+  function regularExp(overrides: Partial<RegularExpense> = {}): RegularExpense {
+    return {
+      id: 'e1',
+      name: 'Test expense',
+      amount: 12_000,
+      expenseType: 'regular',
+      frequency: 'annual',
+      inflationAdjusted: false,
+      ...overrides,
+    }
+  }
+
+  it('regular expense with startAge: zero expense before startAge', () => {
+    const cfg = baseConfig({
+      expenses: [regularExp({ startAge: 55 })],
+    })
+    const snaps = projectFinances(cfg)
+    // ages 50–54 should have 0 expenses
+    snaps.filter((s) => s.age < 55).forEach((s) => expect(s.expenses).toBe(0))
+    // age 55+ should have the expense
+    snaps.filter((s) => s.age >= 55).forEach((s) => expect(s.expenses).toBe(12_000))
+  })
+
+  it('regular expense with endAge: zero expense after endAge', () => {
+    const cfg = baseConfig({
+      expenses: [regularExp({ endAge: 52 })],
+    })
+    const snaps = projectFinances(cfg)
+    snaps.filter((s) => s.age <= 52).forEach((s) => expect(s.expenses).toBe(12_000))
+    snaps.filter((s) => s.age > 52).forEach((s) => expect(s.expenses).toBe(0))
+  })
+
+  it('regular expense with startAge and endAge: only active in range', () => {
+    const cfg = baseConfig({
+      expenses: [regularExp({ startAge: 52, endAge: 54 })],
+    })
+    const snaps = projectFinances(cfg)
+    snaps.filter((s) => s.age < 52 || s.age > 54).forEach((s) => expect(s.expenses).toBe(0))
+    snaps.filter((s) => s.age >= 52 && s.age <= 54).forEach((s) => expect(s.expenses).toBe(12_000))
+  })
+})
+
+describe('periodic expenses', () => {
+  function periodicExp(overrides: Partial<PeriodicExpense> = {}): PeriodicExpense {
+    return {
+      id: 'e1',
+      name: 'Home maintenance',
+      amount: 10_000,
+      expenseType: 'periodic',
+      intervalYears: 3,
+      inflationAdjusted: false,
+      ...overrides,
+    }
+  }
+
+  it('fires at currentAge and every intervalYears after (intervalYears=3, startAge=currentAge)', () => {
+    const cfg = baseConfig({
+      expenses: [periodicExp({ intervalYears: 3 })],
+    })
+    const snaps = projectFinances(cfg)
+    // currentAge=50: fires at 50, 53, 56, 59; not at 51, 52, 54, 55, 57, 58, 60
+    const fireAges = [50, 53, 56, 59]
+    const noFireAges = [51, 52, 54, 55, 57, 58, 60]
+    fireAges.forEach((age) => {
+      const s = snaps.find((x) => x.age === age)!
+      expect(s.expenses).toBe(10_000)
+    })
+    noFireAges.forEach((age) => {
+      const s = snaps.find((x) => x.age === age)!
+      expect(s.expenses).toBe(0)
+    })
+  })
+
+  it('startAge offsets the first fire year', () => {
+    // startAge=52, intervalYears=5: fires at 52, 57; not at 50, 51, 53, 54, 55, 56
+    const cfg = baseConfig({
+      expenses: [periodicExp({ startAge: 52, intervalYears: 5 })],
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps.find((s) => s.age === 50)!.expenses).toBe(0)
+    expect(snaps.find((s) => s.age === 51)!.expenses).toBe(0)
+    expect(snaps.find((s) => s.age === 52)!.expenses).toBe(10_000)
+    expect(snaps.find((s) => s.age === 53)!.expenses).toBe(0)
+    expect(snaps.find((s) => s.age === 57)!.expenses).toBe(10_000)
+  })
+
+  it('does not fire after endAge', () => {
+    // fires at 50, 53, 56 — but endAge=55 blocks 56
+    const cfg = baseConfig({
+      expenses: [periodicExp({ intervalYears: 3, endAge: 55 })],
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps.find((s) => s.age === 50)!.expenses).toBe(10_000)
+    expect(snaps.find((s) => s.age === 53)!.expenses).toBe(10_000)
+    expect(snaps.find((s) => s.age === 56)!.expenses).toBe(0)
+  })
+
+  it('applies inflation to amount in a fire year', () => {
+    const cfg = baseConfig({
+      inflationRate: 0.10,
+      expenses: [periodicExp({ intervalYears: 3, inflationAdjusted: true })],
+    })
+    const snaps = projectFinances(cfg)
+    // First fire year is age 50 (yearsElapsed=0) — no inflation yet
+    expect(snaps.find((s) => s.age === 50)!.expenses).toBeCloseTo(10_000, 0)
+    // Next fire year is age 53 (yearsElapsed=3) — inflated by (1.1)^3
+    const expected53 = 10_000 * Math.pow(1.1, 3)
+    expect(snaps.find((s) => s.age === 53)!.expenses).toBeCloseTo(expected53, 0)
+  })
+
+  it('non-fire year has zero expenses for a periodic-only config', () => {
+    const cfg = baseConfig({
+      expenses: [periodicExp({ intervalYears: 3 })],
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps.find((s) => s.age === 51)!.expenses).toBe(0)
+  })
+})
+
+describe('education expenses and 529 draw', () => {
+  function educationExp(overrides: Partial<EducationExpense> = {}): EducationExpense {
+    return {
+      id: 'e1',
+      name: 'Tuition',
+      amount: 20_000,
+      expenseType: 'education',
+      frequency: 'annual',
+      inflationAdjusted: false,
+      ...overrides,
+    }
+  }
+
+  it('529 covers full education expense — cash unchanged, 529 decreases', () => {
+    const cfg = baseConfig({
+      expenses: [educationExp()],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 100_000, contributions: [] },
+        { id: '529', type: 'educationSavings529', balanceAtSimulationStart: 50_000, contributions: [] },
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    // After year 1 (age 50): cash starts at 100k, netCashFlow = -20k (expense), then 529 reimburses 20k
+    // So cash ends at 100k, 529 ends at 30k
+    const s0 = snaps[0]
+    expect(s0.assetBreakdown.find((a) => a.label === 'Cash')!.balance).toBeCloseTo(100_000, 0)
+    expect(s0.assetBreakdown.find((a) => a.label === 'Education Savings (529 Plan)')!.balance).toBeCloseTo(30_000, 0)
+    expect(s0.expenses).toBe(20_000)
+  })
+
+  it('529 partially covers education — remainder from cash', () => {
+    const cfg = baseConfig({
+      expenses: [educationExp()],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 100_000, contributions: [] },
+        { id: '529', type: 'educationSavings529', balanceAtSimulationStart: 5_000, contributions: [] },
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s0 = snaps[0]
+    // 529 covers $5k, remaining $15k from cash
+    expect(s0.assetBreakdown.find((a) => a.label === 'Education Savings (529 Plan)')!.balance).toBeCloseTo(0, 0)
+    // cash = 100k - 20k (expense via netCashFlow) + 5k (529 refund) = 85k
+    expect(s0.assetBreakdown.find((a) => a.label === 'Cash')!.balance).toBeCloseTo(85_000, 0)
+  })
+
+  it('no 529 — full education expense from cash', () => {
+    const cfg = baseConfig({
+      expenses: [educationExp()],
+    })
+    const snaps = projectFinances(cfg)
+    const s0 = snaps[0]
+    expect(s0.assetBreakdown.find((a) => a.label === 'Cash')!.balance).toBeCloseTo(80_000, 0)
+  })
+
+  it('two 529 accounts — first drained before second drawn', () => {
+    const cfg = baseConfig({
+      expenses: [educationExp()],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 100_000, contributions: [] },
+        { id: '529a', type: 'educationSavings529', balanceAtSimulationStart: 8_000, contributions: [] },
+        { id: '529b', type: 'educationSavings529', balanceAtSimulationStart: 15_000, contributions: [] },
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s0 = snaps[0]
+    // 529a ($8k) fully drained, 529b ($15k) down by $12k → total 529 = $3k
+    const total529 = s0.assetBreakdown
+      .filter((a) => a.label === 'Education Savings (529 Plan)')
+      .reduce((sum, a) => sum + a.balance, 0)
+    expect(total529).toBeCloseTo(3_000, 0)
+    // cash = 100k - 20k + 20k (fully covered) = 100k
+    expect(s0.assetBreakdown.find((a) => a.label === 'Cash')!.balance).toBeCloseTo(100_000, 0)
+  })
+
+  it('expenses snapshot includes education + regular in the same year', () => {
+    const regular: RegularExpense = { id: 'r1', name: 'Food', amount: 24_000, expenseType: 'regular', frequency: 'annual', inflationAdjusted: false }
+    const education = educationExp()
+    const cfg = baseConfig({ expenses: [regular, education] })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].expenses).toBe(44_000)
   })
 })

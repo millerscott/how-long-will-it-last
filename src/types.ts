@@ -25,14 +25,34 @@ export interface IncomeSource {
 
 export type Frequency = 'monthly' | 'annual'
 
-export interface Expense {
+export type ExpenseType = 'regular' | 'periodic' | 'education'
+
+interface ExpenseBase {
   id: string
   name: string
   amount: number
-  frequency: Frequency
-  /** If true, grows with inflation each year */
   inflationAdjusted: boolean
+  startAge?: number
+  endAge?: number
 }
+
+export interface RegularExpense extends ExpenseBase {
+  expenseType: 'regular'
+  frequency: Frequency
+}
+
+export interface PeriodicExpense extends ExpenseBase {
+  expenseType: 'periodic'
+  /** Recurs every N years (integer ≥ 1) */
+  intervalYears: number
+}
+
+export interface EducationExpense extends ExpenseBase {
+  expenseType: 'education'
+  frequency: Frequency
+}
+
+export type Expense = RegularExpense | PeriodicExpense | EducationExpense
 
 export type AssetType =
   | 'cash'
@@ -71,6 +91,8 @@ export interface HouseholdAsset {
   type: AssetType
   balanceAtSimulationStart: number
   contributions: ContributionPeriod[]
+  /** Months of annual expenses to hold as a minimum reserve. Cash and MM only; undefined or 0 = no reserve. */
+  monthsReserve?: number
 }
 
 export interface AssetRates {

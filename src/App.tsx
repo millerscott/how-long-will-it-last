@@ -51,6 +51,12 @@ export default function App() {
     })(),
     // Ensure incomeType is set on all existing income sources (migration)
     incomeSources: (rawConfig.incomeSources ?? []).map((s) => ({ incomeType: 'wage' as const, ...s })),
+    // Ensure expenseType and frequency are set on all existing expenses (migration)
+    expenses: (rawConfig.expenses ?? []).map((e) => ({
+      ...(!(e as any).expenseType ? { expenseType: 'regular' as const } : {}),
+      ...(!(e as any).frequency && !(e as any).intervalYears ? { frequency: 'monthly' as const } : {}),
+      ...e,
+    })) as AppConfig['expenses'],
   }
   const config: AppConfig = merged
   const [tab, setTab] = useLocalStorage<Tab>('hlwil-tab', 'household')

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, Frequency } from '../types'
+import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, RegularExpense, EducationExpense, PeriodicExpense, ExpenseType, Frequency } from '../types'
 import { ASSET_TYPE_LABELS, ADDABLE_ASSET_TYPES } from '../types'
 import { US_STATES } from '../lib/states'
 import CurrencyInput from './CurrencyInput'
@@ -125,14 +125,32 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
   // --- Expenses ---
   function addExpense() {
-    const exp: Expense = { id: uid(), name: 'New expense', amount: 0, frequency: 'monthly', inflationAdjusted: true }
+    const exp: RegularExpense = { id: uid(), name: 'New expense', amount: 0, expenseType: 'regular', frequency: 'monthly', inflationAdjusted: true }
     onChange({ ...config, expenses: [...config.expenses, exp] })
   }
   function updateExpense(id: string, partial: Partial<Expense>) {
-    onChange({ ...config, expenses: config.expenses.map((e) => (e.id === id ? { ...e, ...partial } : e)) })
+    onChange({ ...config, expenses: config.expenses.map((e) => (e.id === id ? { ...e, ...partial } as Expense : e)) })
   }
   function removeExpense(id: string) {
     onChange({ ...config, expenses: config.expenses.filter((e) => e.id !== id) })
+  }
+  function changeExpenseType(id: string, newType: ExpenseType) {
+    const existing = config.expenses.find((e) => e.id === id)!
+    const base = {
+      id: existing.id,
+      name: existing.name,
+      amount: existing.amount,
+      inflationAdjusted: existing.inflationAdjusted,
+      startAge: existing.startAge,
+      endAge: existing.endAge,
+    }
+    const updated: Expense =
+      newType === 'periodic'
+        ? { ...base, expenseType: 'periodic', intervalYears: 5 }
+        : newType === 'education'
+        ? { ...base, expenseType: 'education', frequency: 'monthly' }
+        : { ...base, expenseType: 'regular', frequency: 'monthly' }
+    onChange({ ...config, expenses: config.expenses.map((e) => (e.id === id ? updated : e)) })
   }
 
   const [membersOpen, setMembersOpen] = useLocalStorage('hlwil-section-members', true)
@@ -437,45 +455,102 @@ export default function HouseholdPanel({ config, onChange }: Props) {
           <div className="p-4 border-t border-gray-100 space-y-2">
             {/* Column headers */}
             <div className="grid grid-cols-12 gap-2 px-1">
-              <span className="col-span-5 text-xs text-gray-400">Account Type</span>
-              <span className="col-span-6 text-xs text-gray-400">Balance at Start</span>
+              <span className="col-span-4 text-xs text-gray-400">Account Type</span>
+              <span className="col-span-4 text-xs text-gray-400">Balance at Start</span>
+              <span className="col-span-3 text-xs text-gray-400">Reserve</span>
               <span className="col-span-1" />
             </div>
 
             {/* Cash account — always present, non-removable */}
-            {cashAsset && (
-              <div className="grid grid-cols-12 gap-2 items-center bg-indigo-50 rounded p-2">
-                <div className="col-span-5 flex items-center gap-2">
-                  <span className="text-sm font-medium text-indigo-700">{ASSET_TYPE_LABELS.cash}</span>
-                  <span className="text-xs text-indigo-400 bg-indigo-100 rounded px-1.5 py-0.5">primary</span>
+            {cashAsset && (() => {
+              const baseAnnualExpenses = config.expenses.reduce((sum, e) => {
+                if (e.expenseType === 'periodic') return sum
+                return sum + ((e as RegularExpense | EducationExpense).frequency === 'monthly' ? e.amount * 12 : e.amount)
+              }, 0)
+              const cashReserveTarget = (cashAsset.monthsReserve ?? 0) * baseAnnualExpenses / 12
+              return (
+                <div className="grid grid-cols-12 gap-2 items-start bg-indigo-50 rounded p-2">
+                  <div className="col-span-4 flex items-center gap-2 pt-1">
+                    <span className="text-sm font-medium text-indigo-700">{ASSET_TYPE_LABELS.cash}</span>
+                    <span className="text-xs text-indigo-400 bg-indigo-100 rounded px-1.5 py-0.5">primary</span>
+                  </div>
+                  <div className="col-span-4">
+                    <CurrencyInput
+                      value={cashAsset.balanceAtSimulationStart}
+                      onChange={(v) => updateAsset(cashAsset.id, { balanceAtSimulationStart: v })}
+                    />
+                  </div>
+                  <div className="col-span-3 flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="0"
+                        className="input text-sm w-full"
+                        value={cashAsset.monthsReserve ?? ''}
+                        onChange={(e) => updateAsset(cashAsset.id, {
+                          monthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
+                        })}
+                      />
+                      <span className="text-xs text-gray-400 shrink-0">mo.</span>
+                    </div>
+                    {cashReserveTarget > 0 && (
+                      <span className="text-xs text-gray-400">≈ {fmt.format(cashReserveTarget)}</span>
+                    )}
+                  </div>
+                  <div className="col-span-1" />
                 </div>
-                <div className="col-span-6">
-                  <CurrencyInput
-                    value={cashAsset.balanceAtSimulationStart}
-                    onChange={(v) => updateAsset(cashAsset.id, { balanceAtSimulationStart: v })}
-                  />
-                </div>
-                <div className="col-span-1" />
-              </div>
-            )}
+              )
+            })()}
 
             {/* Other accounts */}
-            {nonCashAssets.map((asset) => (
+            {nonCashAssets.map((asset) => {
+              const isMM = asset.type === 'moneyMarketSavings'
+              const baseAnnualExpenses = config.expenses.reduce((sum, e) => {
+                if (e.expenseType === 'periodic') return sum
+                return sum + ((e as RegularExpense | EducationExpense).frequency === 'monthly' ? e.amount * 12 : e.amount)
+              }, 0)
+              const mmReserveTarget = isMM ? (asset.monthsReserve ?? 0) * baseAnnualExpenses / 12 : 0
+              return (
               <div key={asset.id} className="bg-gray-50 rounded p-2 space-y-2">
                 {/* Account header row */}
-                <div className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-5 text-sm text-gray-700">
+                <div className="grid grid-cols-12 gap-2 items-start">
+                  <div className="col-span-4 text-sm text-gray-700 pt-1">
                     {ASSET_TYPE_LABELS[asset.type]}
                   </div>
-                  <div className="col-span-6">
+                  <div className="col-span-4">
                     <CurrencyInput
                       value={asset.balanceAtSimulationStart}
                       onChange={(v) => updateAsset(asset.id, { balanceAtSimulationStart: v })}
                     />
                   </div>
+                  {isMM ? (
+                    <div className="col-span-3 flex flex-col gap-0.5">
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          placeholder="0"
+                          className="input text-sm w-full"
+                          value={asset.monthsReserve ?? ''}
+                          onChange={(e) => updateAsset(asset.id, {
+                            monthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
+                          })}
+                        />
+                        <span className="text-xs text-gray-400 shrink-0">mo.</span>
+                      </div>
+                      {mmReserveTarget > 0 && (
+                        <span className="text-xs text-gray-400">≈ {fmt.format(mmReserveTarget)}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="col-span-3" />
+                  )}
                   <button
                     onClick={() => removeAsset(asset.id)}
-                    className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
+                    className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center pt-1"
                   >
                     ×
                   </button>
@@ -541,7 +616,8 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   ))}
                 </div>
               </div>
-            ))}
+              )
+            })}
 
             {/* Total starting assets */}
             <div className="pt-1 flex justify-end">
@@ -568,7 +644,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
             {!expensesOpen && (
               <span className="text-xs text-gray-400">
                 {config.expenses.length} expense{config.expenses.length !== 1 ? 's' : ''}
-                {config.expenses.length > 0 && ` · ${fmt.format(config.expenses.reduce((s, e) => s + (e.frequency === 'monthly' ? e.amount * 12 : e.amount), 0))} / year`}
+                {config.expenses.length > 0 && ` · ${fmt.format(config.expenses.filter((e) => e.expenseType !== 'periodic').reduce((s, e) => s + ((e as RegularExpense | EducationExpense).frequency === 'monthly' ? e.amount * 12 : e.amount), 0))} / year`}
               </span>
             )}
           </button>
@@ -580,36 +656,116 @@ export default function HouseholdPanel({ config, onChange }: Props) {
             {config.expenses.length === 0 && (
               <p className="text-sm text-gray-400 italic">No expenses added.</p>
             )}
-            {config.expenses.map((exp) => (
-              <div key={exp.id} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded p-3">
-                <input className="col-span-4 input" placeholder="Name" value={exp.name}
-                  onChange={(e) => updateExpense(exp.id, { name: e.target.value })} />
-                <div className="col-span-2 relative">
-                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                  <input type="number" className="input pl-5 w-full" placeholder="Amount" value={exp.amount || ''}
-                    onChange={(e) => updateExpense(exp.id, { amount: parseFloat(e.target.value) || 0 })} />
-                </div>
-                <select className="col-span-2 input" value={exp.frequency}
-                  onChange={(e) => updateExpense(exp.id, { frequency: e.target.value as Frequency })}>
-                  <option value="monthly">Monthly</option>
-                  <option value="annual">Annual</option>
-                </select>
-                <label className="col-span-3 flex items-center gap-1.5 text-sm cursor-pointer">
-                  <input type="checkbox" checked={exp.inflationAdjusted}
-                    onChange={(e) => updateExpense(exp.id, { inflationAdjusted: e.target.checked })} />
-                  Inflation adj.
-                </label>
-                <button onClick={() => removeExpense(exp.id)} className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none">×</button>
-              </div>
-            ))}
             {config.expenses.length > 0 && (
-              <div className="bg-indigo-50 rounded p-3 text-sm flex justify-between items-center">
-                <span className="text-gray-500">Total annual expenses</span>
-                <span className="font-semibold">
-                  {fmt.format(config.expenses.reduce((s, e) => s + (e.frequency === 'monthly' ? e.amount * 12 : e.amount), 0))}
-                </span>
+              <div className="grid grid-cols-12 gap-2 px-1 mb-1">
+                <span className="col-span-2 text-xs text-gray-400">Type</span>
+                <span className="col-span-2 text-xs text-gray-400">Name</span>
+                <span className="col-span-2 text-xs text-gray-400">Amount</span>
+                <span className="col-span-2 text-xs text-gray-400">Freq / Every</span>
+                <span className="col-span-1 text-xs text-gray-400">Infl.</span>
+                <span className="col-span-1 text-xs text-gray-400">Start</span>
+                <span className="col-span-1 text-xs text-gray-400">End</span>
+                <span className="col-span-1" />
               </div>
             )}
+            {config.expenses.map((exp) => (
+              <div key={exp.id} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded p-2">
+                <select
+                  className="col-span-2 input text-xs"
+                  value={exp.expenseType}
+                  onChange={(e) => changeExpenseType(exp.id, e.target.value as ExpenseType)}
+                >
+                  <option value="regular">Regular</option>
+                  <option value="periodic">Periodic</option>
+                  <option value="education">Education 529</option>
+                </select>
+                <input
+                  className="col-span-2 input"
+                  placeholder="Name"
+                  value={exp.name}
+                  onChange={(e) => updateExpense(exp.id, { name: e.target.value })}
+                />
+                <div className="col-span-2 relative">
+                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
+                  <input
+                    type="number"
+                    className="input pl-4 w-full"
+                    placeholder="0"
+                    value={exp.amount || ''}
+                    onChange={(e) => updateExpense(exp.id, { amount: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+                {exp.expenseType === 'periodic' ? (
+                  <div className="col-span-2 flex items-center gap-1">
+                    <input
+                      type="number"
+                      className="input w-full"
+                      min="1"
+                      step="1"
+                      placeholder="5"
+                      value={(exp as PeriodicExpense).intervalYears || ''}
+                      onChange={(e) => updateExpense(exp.id, { intervalYears: Math.max(1, parseInt(e.target.value) || 1) } as Partial<PeriodicExpense>)}
+                    />
+                    <span className="text-xs text-gray-400 shrink-0">yrs</span>
+                  </div>
+                ) : (
+                  <select
+                    className="col-span-2 input"
+                    value={(exp as RegularExpense | EducationExpense).frequency}
+                    onChange={(e) => updateExpense(exp.id, { frequency: e.target.value as Frequency })}
+                  >
+                    <option value="monthly">Monthly</option>
+                    <option value="annual">Annual</option>
+                  </select>
+                )}
+                <div className="col-span-1 flex justify-center">
+                  <input
+                    type="checkbox"
+                    checked={exp.inflationAdjusted}
+                    onChange={(e) => updateExpense(exp.id, { inflationAdjusted: e.target.checked })}
+                  />
+                </div>
+                <input
+                  type="number"
+                  className="col-span-1 input"
+                  placeholder="—"
+                  value={exp.startAge ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    updateExpense(exp.id, { startAge: val === '' ? undefined : parseInt(val) || undefined })
+                  }}
+                />
+                <input
+                  type="number"
+                  className="col-span-1 input"
+                  placeholder="—"
+                  value={exp.endAge ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    updateExpense(exp.id, { endAge: val === '' ? undefined : parseInt(val) || undefined })
+                  }}
+                />
+                <button onClick={() => removeExpense(exp.id)} className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center">×</button>
+              </div>
+            ))}
+            {config.expenses.length > 0 && (() => {
+              const regularAnnual = config.expenses
+                .filter((e) => e.expenseType !== 'periodic')
+                .reduce((s, e) => s + ((e as RegularExpense | EducationExpense).frequency === 'monthly' ? e.amount * 12 : e.amount), 0)
+              const periodicExpenses = config.expenses.filter((e): e is PeriodicExpense => e.expenseType === 'periodic')
+              const periodicTotal = periodicExpenses.reduce((s, e) => s + e.amount, 0)
+              return (
+                <div className="bg-indigo-50 rounded p-3 text-sm flex justify-between items-center">
+                  <span className="text-gray-500">Total recurring annual expenses</span>
+                  <span className="font-semibold">
+                    {fmt.format(regularAnnual)}
+                    {periodicTotal > 0 && (
+                      <span className="text-gray-400 font-normal ml-2">+ {fmt.format(periodicTotal)} periodic</span>
+                    )}
+                  </span>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>

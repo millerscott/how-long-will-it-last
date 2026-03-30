@@ -33,6 +33,7 @@ export interface YearlySnapshot {
   ficaTax: number
   stateIncomeTax: number
   expenses: number
+  expenseBreakdown: IncomeBreakdownItem[]
   netCashFlow: number
   totalAssets: number
   assetBreakdown: AssetBalance[]
@@ -55,32 +56,96 @@ export function applyWaterfall(
   cashAssetId: string,
   householdAssets: AppConfig['householdAssets'],
   primaryAge: number,
+  annualExpenses = 0,
 ): { brokerageWithdrawn: number; traditionalWithdrawn: number } {
+  const monthlyExpense = annualExpenses / 12
+
+  // Compute reserve targets
+  const cashAssetDef = householdAssets.find((a) => a.id === cashAssetId)!
+  const cashTarget = Math.max(0, cashAssetDef.monthsReserve ?? 0) * monthlyExpense
+
+  // MM accounts with a reserve: protected as sources (floor = target) and topped up as destinations
+  const mmTargetMap = new Map<string, number>(
+    householdAssets
+      .filter((a) => a.type === 'moneyMarketSavings' && (a.monthsReserve ?? 0) > 0)
+      .map((a) => [a.id, a.monthsReserve! * monthlyExpense])
+  )
+
   const cashBalance = accountBalances.get(cashAssetId) ?? 0
-  if (cashBalance >= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0 }
+  const cashShortfall = Math.max(0, cashTarget - cashBalance)
+  let mmTopUpTotal = 0
+  for (const [id, target] of mmTargetMap) {
+    mmTopUpTotal += Math.max(0, target - (accountBalances.get(id) ?? 0))
+  }
+
+  const totalPullNeeded = cashShortfall + mmTopUpTotal
+  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0 }
 
   const order: AssetType[] = primaryAge < 60
     ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
     : ['moneyMarketSavings', 'taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529']
 
-  let remaining = -cashBalance
+  let remaining = totalPullNeeded
   let brokerageWithdrawn = 0
   let traditionalWithdrawn = 0
+
   for (const assetType of order) {
     if (remaining <= 0) break
     for (const asset of householdAssets.filter((a) => a.type === assetType)) {
       if (remaining <= 0) break
       const balance = accountBalances.get(asset.id) ?? 0
-      const withdrawal = Math.min(balance, remaining)
+      // MM accounts with a reserve are only drainable above their floor; all other accounts are fully drainable
+      const floor = mmTargetMap.get(asset.id) ?? 0
+      const drainable = Math.max(0, balance - floor)
+      if (drainable <= 0) continue
+      const withdrawal = Math.min(drainable, remaining)
       accountBalances.set(asset.id, balance - withdrawal)
       if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
       if (assetType === 'retirementTraditional') traditionalWithdrawn += withdrawal
       remaining -= withdrawal
     }
   }
-  // If all sources exhausted, remaining deficit stays as negative cash → depleted trips
-  accountBalances.set(cashAssetId, remaining > 0 ? -remaining : 0)
+
+  // Deposit all pulled funds into cash (may be less than totalPullNeeded if sources ran out)
+  const pulledIntoCash = totalPullNeeded - remaining
+  accountBalances.set(cashAssetId, cashBalance + pulledIntoCash)
+
+  // Distribute from cash to MM-with-reserve accounts still below their target,
+  // but only while cash stays at or above its own cashTarget
+  for (const [id, target] of mmTargetMap) {
+    const mmBalance = accountBalances.get(id) ?? 0
+    const deficit = Math.max(0, target - mmBalance)
+    if (deficit <= 0) continue
+    const cashNow = accountBalances.get(cashAssetId) ?? 0
+    const transfer = Math.min(deficit, Math.max(0, cashNow - cashTarget))
+    if (transfer <= 0) continue
+    accountBalances.set(id, mmBalance + transfer)
+    accountBalances.set(cashAssetId, cashNow - transfer)
+  }
+
   return { brokerageWithdrawn, traditionalWithdrawn }
+}
+
+/**
+ * Draws up to amountNeeded from 529 accounts sequentially to cover education expenses.
+ * Mutates accountBalances in place. Returns total amount drawn.
+ */
+export function draw529ForEducation(
+  accountBalances: Map<string, number>,
+  householdAssets: AppConfig['householdAssets'],
+  amountNeeded: number,
+): number {
+  if (amountNeeded <= 0) return 0
+  let remaining = amountNeeded
+  for (const asset of householdAssets.filter((a) => a.type === 'educationSavings529')) {
+    if (remaining <= 0) break
+    const balance = accountBalances.get(asset.id) ?? 0
+    if (balance <= 0) continue
+    const withdrawal = Math.min(balance, remaining)
+    accountBalances.set(asset.id, balance - withdrawal)
+    remaining -= withdrawal
+  }
+  return amountNeeded - remaining
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
@@ -180,21 +245,45 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     }
 
     // --- Expenses ---
-    let expenseTotal = 0
+    const primaryAge = currentAge + yearsElapsed
+    let regularExpenseTotal = 0    // regular + periodic: flows through netCashFlow
+    let educationExpenseTotal = 0  // education: drawn from 529 first, remainder from cash
+    const expenseBreakdown: IncomeBreakdownItem[] = []
+
     for (const exp of expenses) {
-      const annual = exp.frequency === 'monthly' ? exp.amount * 12 : exp.amount
-      const inflated = exp.inflationAdjusted
-        ? annual * Math.pow(1 + inflationRate, yearsElapsed)
-        : annual
-      expenseTotal += inflated
+      const effectiveStart = exp.startAge ?? currentAge
+      if (primaryAge < effectiveStart) continue
+      if (exp.endAge !== undefined && primaryAge > exp.endAge) continue
+
+      if (exp.expenseType === 'periodic') {
+        const yearsSinceFirst = primaryAge - effectiveStart
+        if (yearsSinceFirst % exp.intervalYears !== 0) continue
+        const inflated = exp.inflationAdjusted
+          ? exp.amount * Math.pow(1 + inflationRate, yearsElapsed)
+          : exp.amount
+        regularExpenseTotal += inflated
+        expenseBreakdown.push({ label: exp.name, amount: inflated })
+      } else {
+        const annual = exp.frequency === 'monthly' ? exp.amount * 12 : exp.amount
+        const inflated = exp.inflationAdjusted
+          ? annual * Math.pow(1 + inflationRate, yearsElapsed)
+          : annual
+        if (exp.expenseType === 'education') {
+          educationExpenseTotal += inflated
+        } else {
+          regularExpenseTotal += inflated
+        }
+        expenseBreakdown.push({ label: exp.name, amount: inflated })
+      }
     }
+
+    const expenseTotal = regularExpenseTotal + educationExpenseTotal
 
     // Net cash flow (income after all taxes and expenses) flows into the cash account
     const netCashFlow = income - federalIncomeTax - ficaTax - stateIncomeTax - expenseTotal
 
     // --- Update account balances ---
     // 1. Contributions: apply the active period's amount for each non-cash account
-    const primaryAge = currentAge + yearsElapsed
     let totalContributions = 0
     for (const asset of householdAssets) {
       if (asset.type === 'cash') continue
@@ -215,11 +304,21 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       accountBalances.set(cashAsset.id, prev + netCashFlow - totalContributions)
     }
 
-    // 3. Withdrawal waterfall
+    // 2b. Education draw: 529 accounts reimburse cash for education expenses
+    if (educationExpenseTotal > 0 && cashAsset) {
+      const covered = draw529ForEducation(accountBalances, householdAssets, educationExpenseTotal)
+      if (covered > 0) {
+        const prev = accountBalances.get(cashAsset.id) ?? 0
+        accountBalances.set(cashAsset.id, prev + covered)
+      }
+    }
+
+    // 3. Withdrawal waterfall — uses regularExpenseTotal for reserve calculations
+    //    (education costs are handled by 529 draw; including them would inflate reserve targets)
     let brokerageWithdrawn = 0
     let traditionalWithdrawn = 0
     if (cashAsset) {
-      ;({ brokerageWithdrawn, traditionalWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge))
+      ;({ brokerageWithdrawn, traditionalWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal))
     }
 
     if (brokerageWithdrawn > 0) {
@@ -289,6 +388,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       ficaTax,
       stateIncomeTax: stateIncomeTax + stateCapitalGainsTax,
       expenses: expenseTotal,
+      expenseBreakdown,
       netCashFlow,
       totalAssets: Math.max(0, totalAssets),
       assetBreakdown,

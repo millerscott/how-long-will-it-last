@@ -9,7 +9,7 @@ const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD',
 
 interface PopoverState {
   age: number
-  type: 'tax' | 'assets' | 'income'
+  type: 'tax' | 'assets' | 'income' | 'expenses'
   top: number
   /** Set when anchoring to the left edge of the button */
   left?: number
@@ -36,7 +36,7 @@ export default function ProjectionTable({ snapshots }: Props) {
     return <p className="text-gray-400 italic text-sm">No data to display. Configure your inputs first.</p>
   }
 
-  function openPopover(e: React.MouseEvent, age: number, type: 'tax' | 'assets' | 'income') {
+  function openPopover(e: React.MouseEvent, age: number, type: 'tax' | 'assets' | 'income' | 'expenses') {
     e.stopPropagation()
     if (popover?.age === age && popover?.type === type) {
       setPopover(null)
@@ -72,7 +72,10 @@ export default function ProjectionTable({ snapshots }: Props) {
                 <span className="ml-1 normal-case text-gray-400 font-normal">(click ↓)</span>
               </th>
               <th className="py-2 pr-4 text-right">Net Income</th>
-              <th className="py-2 pr-4 text-right">Expenses</th>
+              <th className="py-2 pr-4 text-right">
+                Expenses
+                <span className="ml-1 normal-case text-gray-400 font-normal">(click ↓)</span>
+              </th>
               <th className="py-2 pr-4 text-right">Net Cash Flow</th>
               <th className="py-2 pr-4 text-right">
                 Total Assets
@@ -85,6 +88,7 @@ export default function ProjectionTable({ snapshots }: Props) {
               const totalTax = s.federalIncomeTax + s.capitalGainsTax + s.niit + s.traditionalIraTax + s.ficaTax + s.stateIncomeTax
               const incomeOpen = popover?.age === s.age && popover?.type === 'income'
               const taxOpen = popover?.age === s.age && popover?.type === 'tax'
+              const expensesOpen = popover?.age === s.age && popover?.type === 'expenses'
               const assetsOpen = popover?.age === s.age && popover?.type === 'assets'
               const rowClass = s.depleted ? 'bg-red-50 text-red-700' : 'hover:bg-gray-50'
 
@@ -115,7 +119,14 @@ export default function ProjectionTable({ snapshots }: Props) {
                   </td>
 
                   <td className="py-2 pr-4 text-right">{fmt.format(netIncome)}</td>
-                  <td className="py-2 pr-4 text-right">{fmt.format(s.expenses)}</td>
+                  <td className="py-2 pr-4 text-right">
+                    <button
+                      onClick={(e) => openPopover(e, s.age, 'expenses')}
+                      className={`underline decoration-dashed underline-offset-2 cursor-pointer rounded px-1 -mx-1 transition-colors ${expensesOpen ? 'bg-rose-100' : 'hover:bg-rose-50'}`}
+                    >
+                      {fmt.format(s.expenses)}
+                    </button>
+                  </td>
                   <td className={`py-2 pr-4 text-right font-medium ${s.netCashFlow < 0 ? 'text-red-600' : 'text-green-700'}`}>
                     {fmt.format(s.netCashFlow)}
                   </td>
@@ -155,6 +166,20 @@ export default function ProjectionTable({ snapshots }: Props) {
                 <span>Total</span>
                 <span>{fmt.format(activeSnapshot.incomeBreakdown.reduce((s, i) => s + i.amount, 0))}</span>
               </div>
+            </>
+          ) : popover.type === 'expenses' ? (
+            <>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Expense Breakdown</p>
+              {activeSnapshot.expenseBreakdown.length === 0
+                ? <p className="text-gray-400 italic text-xs">No expenses this year.</p>
+                : <BreakdownRows rows={activeSnapshot.expenseBreakdown.map((i) => ({ label: i.label, value: i.amount }))} />
+              }
+              {activeSnapshot.expenseBreakdown.length > 0 && (
+                <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
+                  <span>Total</span>
+                  <span>{fmt.format(activeSnapshot.expenses)}</span>
+                </div>
+              )}
             </>
           ) : popover.type === 'tax' ? (
             <>
