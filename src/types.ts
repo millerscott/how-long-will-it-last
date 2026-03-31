@@ -104,6 +104,18 @@ export interface AssetRates {
   educationSavings529: number
 }
 
+export interface MarketCrash {
+  id: string
+  label: string
+  startAge: number
+  /** Peak-to-trough total decline, e.g. 0.35 = 35% */
+  declinePercent: number
+  /** Years to reach the trough (≥ 1) */
+  durationYears: number
+  /** Years to recover back to pre-crash level (≥ 1) */
+  recoveryYears: number
+}
+
 export interface AppConfig {
   household: HouseholdMember[]
   inflationRate: number
@@ -113,6 +125,7 @@ export interface AppConfig {
   expenses: Expense[]
   householdAssets: HouseholdAsset[]
   assetRates: AssetRates
+  marketCrashes: MarketCrash[]
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -133,4 +146,5 @@ export const DEFAULT_CONFIG: AppConfig = {
     retirementRoth: 0.07,
     educationSavings529: 0.07,
   },
+  marketCrashes: [],
 }

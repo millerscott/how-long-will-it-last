@@ -11,6 +11,36 @@ import {
   type FilingStatus,
 } from './tax'
 
+const EQUITY_ASSET_TYPES = new Set<AssetType>([
+  'taxableBrokerage',
+  'retirementTraditional',
+  'retirementRoth',
+  'educationSavings529',
+])
+
+/**
+ * Returns the effective annual rate override for equity assets at the given age,
+ * based on any active market crash or recovery period.
+ * Returns null if no event covers the age (caller uses the normal rate).
+ * First crash in the array wins on overlap.
+ */
+export function getEquityRateOverride(
+  age: number,
+  marketCrashes: AppConfig['marketCrashes'],
+): number | null {
+  for (const crash of marketCrashes) {
+    const crashEnd = crash.startAge + crash.durationYears
+    const recoveryEnd = crashEnd + crash.recoveryYears
+    if (age >= crash.startAge && age < crashEnd) {
+      return Math.pow(1 - crash.declinePercent, 1 / crash.durationYears) - 1
+    }
+    if (age >= crashEnd && age < recoveryEnd) {
+      return Math.pow(1 / (1 - crash.declinePercent), 1 / crash.recoveryYears) - 1
+    }
+  }
+  return null
+}
+
 export interface AssetBalance {
   label: string
   balance: number
@@ -38,6 +68,7 @@ export interface YearlySnapshot {
   totalAssets: number
   assetBreakdown: AssetBalance[]
   depleted: boolean
+  marketCrashActive: boolean
 }
 
 /**
@@ -149,7 +180,7 @@ export function draw529ForEducation(
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
-  const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household } = config
+  const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes } = config
 
   const primaryMember = household[0]
   if (!primaryMember) return []
@@ -358,9 +389,12 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       accountBalances.set(cashAsset.id, prev - postWaterfallTaxes)
     }
 
-    // 4. Apply appreciation to all accounts
+    // 4. Apply appreciation to all accounts (equity types use crash override when active)
+    const equityOverride = getEquityRateOverride(primaryAge, marketCrashes)
     for (const asset of householdAssets) {
-      const rate = assetRates[asset.type]
+      const rate = (equityOverride !== null && EQUITY_ASSET_TYPES.has(asset.type))
+        ? equityOverride
+        : assetRates[asset.type]
       const balance = accountBalances.get(asset.id) ?? 0
       accountBalances.set(asset.id, balance * (1 + rate))
     }
@@ -393,6 +427,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       totalAssets: Math.max(0, totalAssets),
       assetBreakdown,
       depleted,
+      marketCrashActive: equityOverride !== null,
     })
   }
 

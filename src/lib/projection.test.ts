@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { projectFinances, findDepletionAge, applyWaterfall, draw529ForEducation } from './projection'
-import type { AppConfig, HouseholdMember, HouseholdAsset, RegularExpense, PeriodicExpense, EducationExpense } from '../types'
+import { projectFinances, findDepletionAge, applyWaterfall, draw529ForEducation, getEquityRateOverride } from './projection'
+import type { AppConfig, HouseholdMember, HouseholdAsset, RegularExpense, PeriodicExpense, EducationExpense, MarketCrash } from '../types'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -39,6 +39,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       { id: 'cash', type: 'cash', balanceAtSimulationStart: 100_000, contributions: [] },
     ],
     assetRates: ZERO_RATES,
+    marketCrashes: [],
     ...overrides,
   }
 }
@@ -909,5 +910,142 @@ describe('education expenses and 529 draw', () => {
     const cfg = baseConfig({ expenses: [regular, education] })
     const snaps = projectFinances(cfg)
     expect(snaps[0].expenses).toBe(44_000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getEquityRateOverride — unit tests
+// ---------------------------------------------------------------------------
+
+function crash(overrides: Partial<MarketCrash> = {}): MarketCrash {
+  return {
+    id: 'c1',
+    label: 'Test crash',
+    startAge: 60,
+    declinePercent: 0.35,
+    durationYears: 2,
+    recoveryYears: 3,
+    ...overrides,
+  }
+}
+
+describe('getEquityRateOverride', () => {
+  it('returns null before the crash starts', () => {
+    expect(getEquityRateOverride(59, [crash()])).toBeNull()
+  })
+
+  it('returns negative crash rate during crash period', () => {
+    // -35% over 2 years: (0.65)^(1/2) - 1
+    const expected = Math.pow(0.65, 0.5) - 1
+    expect(getEquityRateOverride(60, [crash()])).toBeCloseTo(expected, 10)
+    expect(getEquityRateOverride(61, [crash()])).toBeCloseTo(expected, 10)
+  })
+
+  it('returns positive recovery rate during recovery period', () => {
+    // recover from -35% over 3 years: (1/0.65)^(1/3) - 1
+    const expected = Math.pow(1 / 0.65, 1 / 3) - 1
+    expect(getEquityRateOverride(62, [crash()])).toBeCloseTo(expected, 10) // crashEnd = 62
+    expect(getEquityRateOverride(64, [crash()])).toBeCloseTo(expected, 10)
+  })
+
+  it('returns null at the end of the recovery period', () => {
+    // recoveryEnd = startAge(60) + duration(2) + recovery(3) = 65
+    expect(getEquityRateOverride(65, [crash()])).toBeNull()
+  })
+
+  it('first crash wins when two crashes overlap', () => {
+    const c1 = crash({ id: 'c1', startAge: 60, declinePercent: 0.35, durationYears: 2, recoveryYears: 3 })
+    const c2 = crash({ id: 'c2', startAge: 60, declinePercent: 0.20, durationYears: 1, recoveryYears: 2 })
+    const rate = getEquityRateOverride(60, [c1, c2])
+    expect(rate).toBeCloseTo(Math.pow(0.65, 0.5) - 1, 10) // c1 wins
+  })
+
+  it('returns null with empty crash list', () => {
+    expect(getEquityRateOverride(65, [])).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Market crash integration tests
+// ---------------------------------------------------------------------------
+
+describe('market crash projection', () => {
+  const EQUITY_RATES = { ...ZERO_RATES, taxableBrokerage: 0.07, retirementTraditional: 0.07, retirementRoth: 0.07, educationSavings529: 0.07 }
+
+  it('brokerage balance is lower during and after crash vs no-crash baseline', () => {
+    const assets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 100_000, contributions: [] },
+    ]
+    const noCrash = projectFinances(baseConfig({ householdAssets: assets, assetRates: EQUITY_RATES }))
+    const withCrash = projectFinances(baseConfig({
+      householdAssets: assets,
+      assetRates: EQUITY_RATES,
+      marketCrashes: [crash({ startAge: 51, declinePercent: 0.35, durationYears: 2, recoveryYears: 3 })],
+    }))
+
+    // During crash (age 51, 52): brokerage lower than no-crash
+    const crashAge = withCrash.find((s) => s.age === 51)!
+    const noCrashAge = noCrash.find((s) => s.age === 51)!
+    expect(crashAge.assetBreakdown.find((a) => a.label === 'Taxable Brokerage')!.balance)
+      .toBeLessThan(noCrashAge.assetBreakdown.find((a) => a.label === 'Taxable Brokerage')!.balance)
+  })
+
+  it('marketCrashActive is true only during crash and recovery ages', () => {
+    const snaps = projectFinances(baseConfig({
+      marketCrashes: [crash({ startAge: 52, durationYears: 2, recoveryYears: 3 })],
+    }))
+    // before crash
+    expect(snaps.find((s) => s.age === 50)!.marketCrashActive).toBe(false)
+    expect(snaps.find((s) => s.age === 51)!.marketCrashActive).toBe(false)
+    // crash period: 52, 53
+    expect(snaps.find((s) => s.age === 52)!.marketCrashActive).toBe(true)
+    expect(snaps.find((s) => s.age === 53)!.marketCrashActive).toBe(true)
+    // recovery period: 54, 55, 56
+    expect(snaps.find((s) => s.age === 54)!.marketCrashActive).toBe(true)
+    expect(snaps.find((s) => s.age === 56)!.marketCrashActive).toBe(true)
+    // after recovery
+    expect(snaps.find((s) => s.age === 57)!.marketCrashActive).toBe(false)
+  })
+
+  it('cash and MM balances are unaffected by a crash', () => {
+    const assets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 50_000, contributions: [] },
+      { id: 'mm', type: 'moneyMarketSavings', balanceAtSimulationStart: 30_000, contributions: [] },
+    ]
+    const mmRates = { ...ZERO_RATES, moneyMarketSavings: 0.04 }
+    const noCrash = projectFinances(baseConfig({ householdAssets: assets, assetRates: mmRates }))
+    const withCrash = projectFinances(baseConfig({
+      householdAssets: assets,
+      assetRates: mmRates,
+      marketCrashes: [crash({ startAge: 51, durationYears: 2, recoveryYears: 3 })],
+    }))
+
+    for (let age = 51; age <= 56; age++) {
+      const nc = noCrash.find((s) => s.age === age)!
+      const wc = withCrash.find((s) => s.age === age)!
+      expect(wc.assetBreakdown.find((a) => a.label === 'Cash')!.balance)
+        .toBeCloseTo(nc.assetBreakdown.find((a) => a.label === 'Cash')!.balance, 2)
+      expect(wc.assetBreakdown.find((a) => a.label === 'Money Market / Savings')!.balance)
+        .toBeCloseTo(nc.assetBreakdown.find((a) => a.label === 'Money Market / Savings')!.balance, 2)
+    }
+  })
+
+  it('normal rates resume after the recovery period ends', () => {
+    const assets: AppConfig['householdAssets'] = [
+      { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+      { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 100_000, contributions: [] },
+    ]
+    const snaps = projectFinances(baseConfig({
+      householdAssets: assets,
+      assetRates: EQUITY_RATES,
+      marketCrashes: [crash({ startAge: 51, durationYears: 1, recoveryYears: 1 })],
+    }))
+    // After recovery ends (age 53+), growth rate should be back to 7%
+    const s53 = snaps.find((s) => s.age === 53)!
+    const s54 = snaps.find((s) => s.age === 54)!
+    const brok53 = s53.assetBreakdown.find((a) => a.label === 'Taxable Brokerage')!.balance
+    const brok54 = s54.assetBreakdown.find((a) => a.label === 'Taxable Brokerage')!.balance
+    expect(brok54).toBeCloseTo(brok53 * 1.07, 2)
   })
 })

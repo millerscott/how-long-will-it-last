@@ -97,7 +97,12 @@ export default function ProjectionTable({ snapshots }: Props) {
               return (
                 <tr key={s.age} className={`border-b last:border-0 ${rowClass}`}>
                   <td className="py-2 pr-4 font-medium">{s.year}</td>
-                  <td className="py-2 pr-4 text-gray-500">{s.age}</td>
+                  <td className="py-2 pr-4 text-gray-500">
+                    {s.age}
+                    {s.marketCrashActive && (
+                      <span className="ml-1 text-orange-500 text-xs" title="Market crash/recovery active">↓</span>
+                    )}
+                  </td>
                   {/* Income — clickable */}
                   <td className="py-2 pr-4 text-right">
                     <button

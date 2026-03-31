@@ -1,7 +1,17 @@
-import type { AppConfig, AssetRates } from '../types'
+import type { AppConfig, AssetRates, MarketCrash } from '../types'
 import { ASSET_TYPE_LABELS } from '../types'
 import PercentField from './PercentField'
 import { useLocalStorage } from '../hooks/useLocalStorage'
+
+function uid() {
+  return Math.random().toString(36).slice(2)
+}
+
+const PRESETS: Omit<MarketCrash, 'id'>[] = [
+  { label: 'Mild correction', startAge: 65, declinePercent: 0.20, durationYears: 1, recoveryYears: 2 },
+  { label: 'Moderate bear', startAge: 65, declinePercent: 0.40, durationYears: 2, recoveryYears: 4 },
+  { label: 'Severe crash',  startAge: 65, declinePercent: 0.55, durationYears: 3, recoveryYears: 7 },
+]
 
 interface Props {
   config: AppConfig
@@ -23,15 +33,29 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
     update({ assetRates: { ...config.assetRates, ...partial } })
   }
 
+  function addCrash(preset: Omit<MarketCrash, 'id'>) {
+    update({ marketCrashes: [...config.marketCrashes, { id: uid(), ...preset }] })
+  }
+  function updateCrash(id: string, partial: Partial<MarketCrash>) {
+    update({ marketCrashes: config.marketCrashes.map((c) => c.id === id ? { ...c, ...partial } : c) })
+  }
+  function removeCrash(id: string) {
+    update({ marketCrashes: config.marketCrashes.filter((c) => c.id !== id) })
+  }
+
   const nonCashRates = (Object.keys(config.assetRates) as (keyof AssetRates)[]).filter(
     (k) => k !== 'cash' && config.assetRates[k] !== 0
   )
 
-  const summary = [
+  const summaryParts = [
     `Inflation ${fmtPct(config.inflationRate)}`,
     `${config.simulationYears} yr simulation`,
     ...nonCashRates.map((k) => `${ASSET_TYPE_LABELS[k]} ${fmtPct(config.assetRates[k])}`),
-  ].join(' · ')
+  ]
+  if (config.marketCrashes.length > 0) {
+    summaryParts.push(`${config.marketCrashes.length} market scenario${config.marketCrashes.length !== 1 ? 's' : ''}`)
+  }
+  const summary = summaryParts.join(' · ')
 
   return (
     <div className="border border-gray-200 rounded-lg">
@@ -93,6 +117,94 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Market Scenarios */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-600">Market Scenarios</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Simulate crashes affecting equity accounts (brokerage, retirement, 529). Cash and money market are unaffected.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 mb-3">
+              {PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  onClick={() => addCrash(preset)}
+                  className="text-xs px-2.5 py-1 border border-gray-300 rounded hover:border-orange-400 hover:text-orange-700 transition-colors"
+                >
+                  + {preset.label}
+                </button>
+              ))}
+            </div>
+
+            {config.marketCrashes.length > 0 && (
+              <>
+                <div className="grid grid-cols-12 gap-2 px-1 mb-1">
+                  <span className="col-span-3 text-xs text-gray-400">Label</span>
+                  <span className="col-span-2 text-xs text-gray-400">Start Age</span>
+                  <span className="col-span-2 text-xs text-gray-400">Decline %</span>
+                  <span className="col-span-2 text-xs text-gray-400">Duration</span>
+                  <span className="col-span-2 text-xs text-gray-400">Recovery</span>
+                  <span className="col-span-1" />
+                </div>
+                <div className="space-y-2">
+                  {config.marketCrashes.map((crash) => (
+                    <div key={crash.id} className="grid grid-cols-12 gap-2 items-center bg-orange-50 rounded p-2">
+                      <input
+                        className="col-span-3 input text-sm"
+                        placeholder="e.g. 2008 crash"
+                        value={crash.label}
+                        onChange={(e) => updateCrash(crash.id, { label: e.target.value })}
+                      />
+                      <input
+                        type="number"
+                        className="col-span-2 input"
+                        min={0}
+                        value={crash.startAge}
+                        onChange={(e) => updateCrash(crash.id, { startAge: parseInt(e.target.value) || 0 })}
+                      />
+                      <div className="col-span-2">
+                        <PercentField
+                          label=""
+                          value={crash.declinePercent}
+                          onChange={(v) => updateCrash(crash.id, { declinePercent: v })}
+                        />
+                      </div>
+                      <div className="col-span-2 flex items-center gap-1">
+                        <input
+                          type="number"
+                          className="input w-full"
+                          min={1}
+                          step={1}
+                          value={crash.durationYears}
+                          onChange={(e) => updateCrash(crash.id, { durationYears: Math.max(1, parseInt(e.target.value) || 1) })}
+                        />
+                        <span className="text-xs text-gray-400 shrink-0">yr</span>
+                      </div>
+                      <div className="col-span-2 flex items-center gap-1">
+                        <input
+                          type="number"
+                          className="input w-full"
+                          min={1}
+                          step={1}
+                          value={crash.recoveryYears}
+                          onChange={(e) => updateCrash(crash.id, { recoveryYears: Math.max(1, parseInt(e.target.value) || 1) })}
+                        />
+                        <span className="text-xs text-gray-400 shrink-0">yr</span>
+                      </div>
+                      <button
+                        onClick={() => removeCrash(crash.id)}
+                        className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
