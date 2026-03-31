@@ -154,5 +154,5 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   marketCrashes: [],
   rothConversionTargetBracket: null,
-  simulationMode: 'nominal',
+  simulationMode: 'real',
 }
