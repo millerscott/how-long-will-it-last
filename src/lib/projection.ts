@@ -204,6 +204,18 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const yearsElapsed = age - currentAge
     const year = currentYear + yearsElapsed
 
+    // Once depleted, all balances stay at zero for the remainder of the simulation
+    if (depleted) {
+      snapshots.push({
+        age, year, income: 0, incomeBreakdown: [], federalIncomeTax: 0, capitalGainsTax: 0,
+        niit: 0, traditionalIraTax: 0, ficaTax: 0, stateIncomeTax: 0, expenses: 0,
+        expenseBreakdown: [], netCashFlow: 0, totalAssets: 0,
+        assetBreakdown: householdAssets.map((a) => ({ label: ASSET_TYPE_LABELS[a.type], balance: 0 })),
+        depleted: true, marketCrashActive: false,
+      })
+      continue
+    }
+
     // --- Income (tracked per member for state tax purposes) ---
     // SS income is tracked separately: different growth rate, different tax treatment, no FICA
     let wageIncome = 0
