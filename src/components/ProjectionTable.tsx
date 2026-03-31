@@ -190,12 +190,11 @@ export default function ProjectionTable({ snapshots }: Props) {
             <>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tax Breakdown</p>
               <BreakdownRows rows={[
-                { label: 'Federal Income Tax', value: activeSnapshot.federalIncomeTax },
-                { label: 'Capital Gains Tax', value: activeSnapshot.capitalGainsTax },
-                { label: 'Traditional IRA Tax', value: activeSnapshot.traditionalIraTax },
-                { label: 'Net Investment Income Tax', value: activeSnapshot.niit },
+                { label: 'Federal Income Tax', value: activeSnapshot.federalIncomeTax + activeSnapshot.traditionalIraTax },
                 { label: 'FICA', value: activeSnapshot.ficaTax },
                 { label: 'State Income Tax', value: activeSnapshot.stateIncomeTax },
+                { label: 'Capital Gains Tax', value: activeSnapshot.capitalGainsTax },
+                { label: 'Net Investment Income Tax', value: activeSnapshot.niit },
               ]} />
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>

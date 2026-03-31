@@ -221,13 +221,16 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       const isSS = src.incomeType === 'socialSecurity'
       const growthRate = isSS ? ssCola : src.annualGrowthRate
       const amount = src.annualAmount * Math.pow(1 + growthRate, yearsOfGrowth)
-      incomeBreakdown.push({ label: src.name, amount })
       if (isSS) {
         ssIncome += amount
       } else {
+        incomeBreakdown.push({ label: src.name, amount })
         wageIncome += amount
         wageByMember.set(src.memberId, (wageByMember.get(src.memberId) ?? 0) + amount)
       }
+    }
+    if (ssIncome > 0) {
+      incomeBreakdown.push({ label: 'Social Security', amount: ssIncome })
     }
 
     // --- Interest income (cash + money market — taxed annually as ordinary income) ---
