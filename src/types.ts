@@ -130,6 +130,8 @@ export interface AppConfig {
   marketCrashes: MarketCrash[]
   /** Fill traditional IRA up to this bracket ceiling each year via Roth conversion. Null = disabled. */
   rothConversionTargetBracket: 0.12 | 0.22 | 0.24 | null
+  /** 'nominal' inflates expenses/income; 'real' deflates returns to show present-day dollars. */
+  simulationMode: 'nominal' | 'real'
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -152,4 +154,5 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   marketCrashes: [],
   rothConversionTargetBracket: null,
+  simulationMode: 'nominal',
 }

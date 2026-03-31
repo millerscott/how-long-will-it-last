@@ -43,21 +43,32 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
     update({ marketCrashes: config.marketCrashes.filter((c) => c.id !== id) })
   }
 
-  const nonCashRates = (Object.keys(config.assetRates) as (keyof AssetRates)[]).filter(
-    (k) => k !== 'cash' && config.assetRates[k] !== 0
-  )
+  const ASSET_SHORT_LABELS: Record<keyof AssetRates, string> = {
+    cash: 'Cash',
+    moneyMarketSavings: 'MM/Savings',
+    taxableBrokerage: 'Brokerage',
+    retirementTraditional: 'Trad. IRA',
+    retirementRoth: 'Roth IRA',
+    educationSavings529: '529',
+  }
 
-  const summaryParts = [
-    `Inflation ${fmtPct(config.inflationRate)}`,
-    `${config.simulationYears} yr simulation`,
-    ...nonCashRates.map((k) => `${ASSET_TYPE_LABELS[k]} ${fmtPct(config.assetRates[k])}`),
-  ]
-  if (config.marketCrashes.length > 0) {
-    summaryParts.push(`${config.marketCrashes.length} market scenario${config.marketCrashes.length !== 1 ? 's' : ''}`)
-  }
-  if (config.rothConversionTargetBracket !== null) {
-    summaryParts.push(`Roth conversions to ${(config.rothConversionTargetBracket * 100).toFixed(0)}% bracket`)
-  }
+  const summaryParts: string[] = []
+  // Basic Settings
+  summaryParts.push(config.simulationMode === 'real' ? 'Real $' : 'Nominal $')
+  summaryParts.push(`${config.simulationYears} yrs`)
+  summaryParts.push(
+    config.rothConversionTargetBracket !== null
+      ? `Roth → ${(config.rothConversionTargetBracket * 100).toFixed(0)}% bracket`
+      : 'Roth: off'
+  )
+  // Market Scenarios
+  summaryParts.push(`${config.marketCrashes.length} crash scenario${config.marketCrashes.length !== 1 ? 's' : ''}`)
+  // Rates
+  summaryParts.push(`Inflation ${fmtPct(config.inflationRate)}`)
+  summaryParts.push(`SS COLA ${fmtPct(config.ssCola)}`)
+  summaryParts.push(...(Object.keys(config.assetRates) as (keyof AssetRates)[]).map(
+    (k) => `${ASSET_SHORT_LABELS[k]} ${fmtPct(config.assetRates[k])}`
+  ))
   const summary = summaryParts.join(' · ')
 
   return (
@@ -67,7 +78,7 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
         className="w-full flex items-start gap-3 px-4 py-3 hover:bg-gray-50 rounded-lg transition-colors text-left"
       >
         <span className={`text-gray-400 transition-transform duration-200 text-xs mt-0.5 shrink-0 ${open ? 'rotate-90' : ''}`}>▶</span>
-        <span className="text-sm font-semibold text-gray-700 shrink-0">Assumptions</span>
+        <span className="text-sm font-semibold text-gray-700 shrink-0">Configuration</span>
         {!open && (
           <span className="text-xs text-gray-400">{summary}</span>
         )}
@@ -78,17 +89,18 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
           {/* Basic Settings */}
           <div className="pt-4">
             <h3 className="text-sm font-semibold text-gray-600 mb-3">Basic Settings</h3>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <PercentField
-                label="Inflation Rate"
-                value={config.inflationRate}
-                onChange={(v) => update({ inflationRate: v })}
-              />
-              <PercentField
-                label="Social Security COLA"
-                value={config.ssCola}
-                onChange={(v) => update({ ssCola: v })}
-              />
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Dollar Mode</label>
+                <select
+                  className="input w-full"
+                  value={config.simulationMode}
+                  onChange={(e) => update({ simulationMode: e.target.value as 'nominal' | 'real' })}
+                >
+                  <option value="nominal">Nominal (inflated)</option>
+                  <option value="real">Real (today's dollars)</option>
+                </select>
+              </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Max Years to Run Simulation</label>
                 <input
@@ -116,22 +128,6 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                   <option value="0.24">Fill to 24% bracket</option>
                 </select>
               </div>
-            </div>
-          </div>
-
-          {/* Asset Appreciation Rates */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-600 mb-1">Asset Appreciation Rates</h3>
-            <p className="text-xs text-gray-400 mb-3">Annual appreciation rate assumed for each account type.</p>
-            <div className="grid grid-cols-3 gap-x-4 gap-y-3">
-              {(Object.keys(config.assetRates) as (keyof AssetRates)[]).map((type) => (
-                <PercentField
-                  key={type}
-                  label={ASSET_TYPE_LABELS[type]}
-                  value={config.assetRates[type]}
-                  onChange={(v) => updateRates({ [type]: v })}
-                />
-              ))}
             </div>
           </div>
 
@@ -221,6 +217,32 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                 </div>
               </>
             )}
+          </div>
+
+          {/* Rates */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-600 mb-1">Rates</h3>
+            <p className="text-xs text-gray-400 mb-3">Annual rates assumed for inflation, Social Security, and appreciation for each account type.</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+              <PercentField
+                label="Inflation Rate"
+                value={config.inflationRate}
+                onChange={(v) => update({ inflationRate: v })}
+              />
+              <PercentField
+                label="Social Security COLA"
+                value={config.ssCola}
+                onChange={(v) => update({ ssCola: v })}
+              />
+              {(Object.keys(config.assetRates) as (keyof AssetRates)[]).map((type) => (
+                <PercentField
+                  key={type}
+                  label={ASSET_TYPE_LABELS[type]} 
+                  value={config.assetRates[type]}
+                  onChange={(v) => updateRates({ [type]: v })}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}

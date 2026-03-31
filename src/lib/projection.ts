@@ -252,6 +252,10 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
   const primaryMember = household[0]
   if (!primaryMember) return []
 
+  const realMode = config.simulationMode === 'real'
+  /** Convert a nominal annual rate to an effective rate (real-adjusted when in real mode) */
+  const toEffectiveRate = (nominal: number) => realMode ? (1 + nominal) / (1 + inflationRate) - 1 : nominal
+
   const currentAge = primaryMember.ageAtSimulationStart
   const simulationEndAge = currentAge + config.simulationYears
 
@@ -287,7 +291,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       if (memberAge < src.startAge || memberAge > effectiveEndAge) continue
       const yearsOfGrowth = memberAge - member.ageAtSimulationStart
       const isSS = src.incomeType === 'socialSecurity'
-      const growthRate = isSS ? ssCola : src.annualGrowthRate
+      const growthRate = toEffectiveRate(isSS ? ssCola : src.annualGrowthRate)
       const amount = src.annualAmount * Math.pow(1 + growthRate, yearsOfGrowth)
       if (isSS) {
         ssIncome += amount
@@ -306,7 +310,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     for (const asset of householdAssets) {
       if (asset.type === 'cash' || asset.type === 'moneyMarketSavings') {
         const balance = accountBalances.get(asset.id) ?? 0
-        const interest = balance * assetRates[asset.type]
+        const interest = balance * toEffectiveRate(assetRates[asset.type])
         if (interest > 0) {
           interestIncome += interest
           incomeBreakdown.push({ label: `Interest (${ASSET_TYPE_LABELS[asset.type]})`, amount: interest })
@@ -369,15 +373,15 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
         const yearsSinceFirst = primaryAge - effectiveStart
         if (yearsSinceFirst % exp.intervalYears !== 0) continue
         const inflated = exp.inflationAdjusted
-          ? exp.amount * Math.pow(1 + inflationRate, yearsElapsed)
-          : exp.amount
+          ? (realMode ? exp.amount : exp.amount * Math.pow(1 + inflationRate, yearsElapsed))
+          : (realMode ? exp.amount / Math.pow(1 + inflationRate, yearsElapsed) : exp.amount)
         regularExpenseTotal += inflated
         expenseBreakdown.push({ label: exp.name, amount: inflated })
       } else {
         const annual = exp.frequency === 'monthly' ? exp.amount * 12 : exp.amount
         const inflated = exp.inflationAdjusted
-          ? annual * Math.pow(1 + inflationRate, yearsElapsed)
-          : annual
+          ? (realMode ? annual : annual * Math.pow(1 + inflationRate, yearsElapsed))
+          : (realMode ? annual / Math.pow(1 + inflationRate, yearsElapsed) : annual)
         if (exp.expenseType === 'education') {
           educationExpenseTotal += inflated
         } else {
@@ -511,9 +515,10 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     // 4. Apply appreciation to all accounts (equity types use crash override when active)
     const equityOverride = getEquityRateOverride(primaryAge, marketCrashes)
     for (const asset of householdAssets) {
-      const rate = (equityOverride !== null && EQUITY_ASSET_TYPES.has(asset.type))
+      const nominalRate = (equityOverride !== null && EQUITY_ASSET_TYPES.has(asset.type))
         ? equityOverride
         : assetRates[asset.type]
+      const rate = toEffectiveRate(nominalRate)
       const balance = accountBalances.get(asset.id) ?? 0
       accountBalances.set(asset.id, balance * (1 + rate))
     }

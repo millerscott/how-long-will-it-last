@@ -42,6 +42,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     assetRates: ZERO_RATES,
     marketCrashes: [],
     rothConversionTargetBracket: null,
+    simulationMode: 'nominal',
     ...overrides,
   }
 }
@@ -1413,5 +1414,101 @@ describe('Roth conversion integration (projectFinances)', () => {
     })
     const snaps = projectFinances(cfg)
     expect(snaps[0].rothConverted).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Real-dollar mode (simulationMode: 'real')
+// ---------------------------------------------------------------------------
+
+describe('real-dollar mode', () => {
+  it('inflation-adjusted expenses stay flat in real mode', () => {
+    const expense: RegularExpense = {
+      id: 'rent', name: 'Rent', amount: 1_000, frequency: 'annual',
+      expenseType: 'regular', inflationAdjusted: true,
+    }
+    const cfg = baseConfig({
+      inflationRate: 0.03,
+      simulationYears: 10,
+      householdAssets: cashOnly(500_000),
+      expenses: [expense],
+      simulationMode: 'real',
+    })
+    const snaps = projectFinances(cfg)
+    // In real mode, inflation-adjusted expenses should not grow
+    expect(snaps[0].expenses).toBeCloseTo(1_000, 0)
+    expect(snaps[5].expenses).toBeCloseTo(1_000, 0)
+    expect(snaps[10].expenses).toBeCloseTo(1_000, 0)
+  })
+
+  it('non-inflation-adjusted expenses shrink in real mode', () => {
+    const expense: RegularExpense = {
+      id: 'fixed', name: 'Fixed', amount: 1_000, frequency: 'annual',
+      expenseType: 'regular', inflationAdjusted: false,
+    }
+    const cfg = baseConfig({
+      inflationRate: 0.03,
+      simulationYears: 10,
+      householdAssets: cashOnly(500_000),
+      expenses: [expense],
+      simulationMode: 'real',
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].expenses).toBeCloseTo(1_000, 0)
+    // After 10 years at 3% inflation, fixed expense = 1000 / 1.03^10 ≈ 744
+    expect(snaps[10].expenses).toBeCloseTo(1_000 / Math.pow(1.03, 10), 0)
+  })
+
+  it('asset returns are deflated by inflation', () => {
+    const cfg = baseConfig({
+      inflationRate: 0.03,
+      simulationYears: 1,
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+        { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 100_000, contributions: [] },
+      ],
+      assetRates: { ...ZERO_RATES, taxableBrokerage: 0.07 },
+      simulationMode: 'real',
+    })
+    const snaps = projectFinances(cfg)
+    // Real rate = (1.07 / 1.03) - 1 ≈ 3.883%
+    const realRate = 1.07 / 1.03 - 1
+    const expected = 100_000 * (1 + realRate)
+    expect(snaps[0].totalAssets).toBeCloseTo(expected, 0)
+  })
+
+  it('income growth is deflated by inflation', () => {
+    const cfg = baseConfig({
+      inflationRate: 0.03,
+      simulationYears: 5,
+      incomeSources: [{
+        id: 'job', memberId: 'm1', name: 'Job',
+        incomeType: 'wage', startAge: 50, annualAmount: 100_000,
+        annualGrowthRate: 0.03,
+      }],
+      simulationMode: 'real',
+    })
+    const snaps = projectFinances(cfg)
+    // Wage growth = 3%, inflation = 3% → real growth = 0% → income stays ~$100k
+    expect(snaps[0].income).toBeCloseTo(100_000, 0)
+    expect(snaps[5].income).toBeCloseTo(100_000, -2) // within $100
+  })
+
+  it('nominal mode inflates expenses as before', () => {
+    const expense: RegularExpense = {
+      id: 'rent', name: 'Rent', amount: 1_000, frequency: 'annual',
+      expenseType: 'regular', inflationAdjusted: true,
+    }
+    const cfg = baseConfig({
+      inflationRate: 0.03,
+      simulationYears: 10,
+      householdAssets: cashOnly(500_000),
+      expenses: [expense],
+      simulationMode: 'nominal',
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].expenses).toBeCloseTo(1_000, 0)
+    // After 10 years: 1000 * 1.03^10 ≈ 1,344
+    expect(snaps[10].expenses).toBeCloseTo(1_000 * Math.pow(1.03, 10), 0)
   })
 })
