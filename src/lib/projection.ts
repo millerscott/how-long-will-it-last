@@ -8,8 +8,23 @@ import {
   calculateTaxableSocialSecurity,
   calculateCapitalGainsTax,
   calculateNiit,
+  calculateRothConversionAmount,
   type FilingStatus,
 } from './tax'
+
+/** IRS Uniform Lifetime Table (2024+) — divisor by age for RMD calculation */
+const RMD_DIVISORS: Record<number, number> = {
+  72: 27.4, 73: 26.5, 74: 25.5, 75: 24.6, 76: 23.7, 77: 22.9,
+  78: 22.0, 79: 21.1, 80: 20.2, 81: 19.4, 82: 18.5, 83: 17.7,
+  84: 16.8, 85: 16.0, 86: 15.2, 87: 14.4, 88: 13.7, 89: 12.9,
+  90: 12.2, 91: 11.5, 92: 10.8, 93: 10.1, 94: 9.5, 95: 8.9,
+  96: 8.4, 97: 7.8, 98: 7.3, 99: 6.8, 100: 6.4, 101: 6.0,
+  102: 5.6, 103: 5.2, 104: 4.9, 105: 4.6, 106: 4.3, 107: 4.1,
+  108: 3.9, 109: 3.7, 110: 3.5, 111: 3.4, 112: 3.3, 113: 3.1,
+  114: 3.0, 115: 2.9, 116: 2.8, 117: 2.7, 118: 2.5, 119: 2.3, 120: 2.0,
+}
+
+const RMD_START_AGE = 73
 
 const EQUITY_ASSET_TYPES = new Set<AssetType>([
   'taxableBrokerage',
@@ -67,6 +82,8 @@ export interface YearlySnapshot {
   netCashFlow: number
   totalAssets: number
   assetBreakdown: AssetBalance[]
+  rmdWithdrawn: number
+  rothConverted: number
   depleted: boolean
   marketCrashActive: boolean
 }
@@ -179,8 +196,58 @@ export function draw529ForEducation(
   return amountNeeded - remaining
 }
 
+/**
+ * Calculates and withdraws RMDs from traditional retirement accounts for each
+ * household member who has reached RMD age (73+). Accounts are attributed to a
+ * member via asset.memberId; unlinked accounts belong to the primary member.
+ * Mutates accountBalances in place. Returns total amount withdrawn.
+ */
+export function calculateRmd(
+  accountBalances: Map<string, number>,
+  householdAssets: AppConfig['householdAssets'],
+  household: AppConfig['household'],
+  yearsElapsed: number,
+): number {
+  if (household.length === 0) return 0
+  const primaryMemberId = household[0].id
+  let totalRmd = 0
+
+  for (const member of household) {
+    const memberAge = member.ageAtSimulationStart + yearsElapsed
+    if (memberAge < RMD_START_AGE) continue
+
+    const divisor = RMD_DIVISORS[Math.min(memberAge, 120)] ?? RMD_DIVISORS[120]
+
+    // Member owns explicitly-linked accounts, plus unlinked accounts if they're the primary member
+    const memberAccounts = householdAssets.filter(
+      (a) => a.type === 'retirementTraditional' &&
+        (a.memberId === member.id || (!a.memberId && member.id === primaryMemberId))
+    )
+
+    let memberBalance = 0
+    for (const acct of memberAccounts) {
+      memberBalance += accountBalances.get(acct.id) ?? 0
+    }
+    if (memberBalance <= 0) continue
+
+    const rmdAmount = memberBalance / divisor
+
+    // Withdraw proportionally from this member's accounts
+    for (const acct of memberAccounts) {
+      const balance = accountBalances.get(acct.id) ?? 0
+      if (balance <= 0) continue
+      const share = balance / memberBalance
+      accountBalances.set(acct.id, balance - share * rmdAmount)
+    }
+
+    totalRmd += rmdAmount
+  }
+
+  return totalRmd
+}
+
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
-  const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes } = config
+  const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes, rothConversionTargetBracket } = config
 
   const primaryMember = household[0]
   if (!primaryMember) return []
@@ -204,17 +271,6 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const yearsElapsed = age - currentAge
     const year = currentYear + yearsElapsed
 
-    // Once depleted, all balances stay at zero for the remainder of the simulation
-    if (depleted) {
-      snapshots.push({
-        age, year, income: 0, incomeBreakdown: [], federalIncomeTax: 0, capitalGainsTax: 0,
-        niit: 0, traditionalIraTax: 0, ficaTax: 0, stateIncomeTax: 0, expenses: 0,
-        expenseBreakdown: [], netCashFlow: 0, totalAssets: 0,
-        assetBreakdown: householdAssets.map((a) => ({ label: ASSET_TYPE_LABELS[a.type], balance: 0 })),
-        depleted: true, marketCrashActive: false,
-      })
-      continue
-    }
 
     // --- Income (tracked per member for state tax purposes) ---
     // SS income is tracked separately: different growth rate, different tax treatment, no FICA
@@ -258,7 +314,15 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       }
     }
 
-    const income = wageIncome + ssIncome + interestIncome
+    // --- RMD: forced withdrawal from traditional accounts for members age 73+ ---
+    // RMD reduces traditional balances; proceeds flow into cash via netCashFlow (included in income).
+    // RMD taxes are computed post-waterfall alongside other traditional withdrawal taxes.
+    const rmdWithdrawn = calculateRmd(accountBalances, householdAssets, household, yearsElapsed)
+    if (rmdWithdrawn > 0) {
+      incomeBreakdown.push({ label: 'Required Minimum Distribution', amount: rmdWithdrawn })
+    }
+
+    const income = wageIncome + ssIncome + interestIncome + rmdWithdrawn
 
     // --- Taxes ---
     // Federal: SS benefits are partially taxable based on provisional income
@@ -359,6 +423,37 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       }
     }
 
+    // 2c. Roth conversion — move traditional → Roth to fill up to target bracket
+    //     Only before RMD age; conversion itself doesn't change cash (only the tax bill does).
+    let rothConverted = 0
+    if (rothConversionTargetBracket !== null && primaryAge < RMD_START_AGE) {
+      const traditionalAccounts = householdAssets.filter((a) => a.type === 'retirementTraditional')
+      const rothAccounts = householdAssets.filter((a) => a.type === 'retirementRoth')
+      const totalTradBalance = traditionalAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
+
+      if (totalTradBalance > 0 && rothAccounts.length > 0) {
+        const baseOrdinary = wageIncome + interestIncome + taxableSs
+        rothConverted = calculateRothConversionAmount(baseOrdinary, totalTradBalance, filingStatus, rothConversionTargetBracket)
+
+        if (rothConverted > 0) {
+          // Withdraw proportionally from traditional accounts
+          for (const acct of traditionalAccounts) {
+            const balance = accountBalances.get(acct.id) ?? 0
+            if (balance <= 0) continue
+            accountBalances.set(acct.id, balance - (balance / totalTradBalance) * rothConverted)
+          }
+          // Deposit proportionally into Roth accounts (by balance; if all zero, put in first)
+          const totalRothBalance = rothAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
+          for (const acct of rothAccounts) {
+            const balance = accountBalances.get(acct.id) ?? 0
+            const share = totalRothBalance > 0 ? balance / totalRothBalance : 1 / rothAccounts.length
+            accountBalances.set(acct.id, balance + share * rothConverted)
+          }
+          incomeBreakdown.push({ label: 'Roth Conversion', amount: rothConverted })
+        }
+      }
+    }
+
     // 3. Withdrawal waterfall — uses regularExpenseTotal for reserve calculations
     //    (education costs are handled by 529 draw; including them would inflate reserve targets)
     let brokerageWithdrawn = 0
@@ -374,6 +469,9 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       incomeBreakdown.push({ label: 'Traditional IRA Withdrawal', amount: traditionalWithdrawn })
     }
 
+    // Combine RMD + Roth conversion + waterfall traditional withdrawals for tax purposes
+    const totalTraditionalWithdrawn = rmdWithdrawn + rothConverted + traditionalWithdrawn
+
     // 3b. Investment taxes: capital gains on brokerage liquidations + NIIT on all NII
     const baseOrdinaryIncome = wageIncome + interestIncome + taxableSs
     const capitalGainsTax = calculateCapitalGainsTax(
@@ -381,19 +479,25 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       baseOrdinaryIncome,
       filingStatus,
     )
-    // Traditional IRA distributions increase MAGI (affecting NIIT threshold) but are not NII themselves
-    const magi = baseOrdinaryIncome + brokerageWithdrawn + traditionalWithdrawn
+    // Traditional IRA distributions (RMD + waterfall) increase MAGI but are not NII themselves.
+    // MAGI uses the original taxableSs here; it will be corrected in the traditionalIraFederalTax step below.
+    const magi = baseOrdinaryIncome + brokerageWithdrawn + totalTraditionalWithdrawn
     const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
     const stateCapitalGainsTax = calculateStateTax(brokerageWithdrawn, primaryState, filingStatus)
 
-    // 3c. Traditional IRA withdrawal — taxed as ordinary income (incremental, stacks on top of existing income)
-    const traditionalIraFederalTax = traditionalWithdrawn > 0
-      ? calculateFederalTax(baseOrdinaryIncome + traditionalWithdrawn, filingStatus)
-        - calculateFederalTax(baseOrdinaryIncome, filingStatus)
+    // 3c. Traditional IRA withdrawal — taxed as ordinary income, with SS taxability recalculated
+    // IRA withdrawals increase provisional income, which can push more SS benefits into taxable territory.
+    // Recompute taxable SS with IRA withdrawals included, then take the delta vs. what was already charged.
+    const taxableSsFinal = totalTraditionalWithdrawn > 0
+      ? calculateTaxableSocialSecurity(wageIncome + interestIncome + totalTraditionalWithdrawn, ssIncome, filingStatus)
+      : taxableSs
+    const traditionalIraFederalTax = totalTraditionalWithdrawn > 0
+      ? calculateFederalTax(wageIncome + interestIncome + taxableSsFinal + totalTraditionalWithdrawn, filingStatus)
+        - federalIncomeTax
       : 0
     const baseStateIncome = wageIncome + interestIncome
-    const traditionalIraStateTax = traditionalWithdrawn > 0
-      ? calculateStateTax(baseStateIncome + traditionalWithdrawn, primaryState, filingStatus)
+    const traditionalIraStateTax = totalTraditionalWithdrawn > 0
+      ? calculateStateTax(baseStateIncome + totalTraditionalWithdrawn, primaryState, filingStatus)
         - calculateStateTax(baseStateIncome, primaryState, filingStatus)
       : 0
     const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
@@ -416,14 +520,15 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
 
     const totalAssets = [...accountBalances.values()].reduce((s, b) => s + b, 0)
 
+    if (totalAssets <= 0) {
+      depleted = true
+      for (const id of accountBalances.keys()) accountBalances.set(id, 0)
+    }
+
     const assetBreakdown: AssetBalance[] = householdAssets.map((a) => ({
       label: ASSET_TYPE_LABELS[a.type],
       balance: accountBalances.get(a.id) ?? 0,
     }))
-
-    if (totalAssets <= 0 && !depleted) {
-      depleted = true
-    }
 
     snapshots.push({
       age,
@@ -441,9 +546,13 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       netCashFlow,
       totalAssets: Math.max(0, totalAssets),
       assetBreakdown,
+      rmdWithdrawn,
+      rothConverted,
       depleted,
       marketCrashActive: equityOverride !== null,
     })
+
+    if (depleted) break
   }
 
   return snapshots

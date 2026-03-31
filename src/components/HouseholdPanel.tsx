@@ -458,9 +458,11 @@ export default function HouseholdPanel({ config, onChange }: Props) {
           <div className="p-4 border-t border-gray-100 space-y-2">
             {/* Column headers */}
             <div className="grid grid-cols-12 gap-2 px-1">
-              <span className="col-span-4 text-xs text-gray-400">Account Type</span>
-              <span className="col-span-4 text-xs text-gray-400">Balance at Start</span>
-              <span className="col-span-3 text-xs text-gray-400">Min. Balance (months of expenses)</span>
+              <span className="col-span-3 text-xs text-gray-400">Account Type</span>
+              <span className="col-span-3 text-xs text-gray-400">Balance at Start</span>
+              <span className="col-span-4 text-xs text-gray-400">
+                {config.household.length >= 2 ? 'Min. Balance (months of expenses) / Account Owner' : 'Min. Balance (months of expenses)'}
+              </span>
               <span className="col-span-1" />
             </div>
 
@@ -473,17 +475,17 @@ export default function HouseholdPanel({ config, onChange }: Props) {
               const cashReserveTarget = (cashAsset.monthsReserve ?? 0) * baseAnnualExpenses / 12
               return (
                 <div className="grid grid-cols-12 gap-2 items-start bg-indigo-50 rounded p-2">
-                  <div className="col-span-4 flex items-center gap-2 pt-1">
+                  <div className="col-span-3 flex items-center gap-2 pt-1">
                     <span className="text-sm font-medium text-indigo-700">{ASSET_TYPE_LABELS.cash}</span>
                     <span className="text-xs text-indigo-400 bg-indigo-100 rounded px-1.5 py-0.5">primary</span>
                   </div>
-                  <div className="col-span-4">
+                  <div className="col-span-3">
                     <CurrencyInput
                       value={cashAsset.balanceAtSimulationStart}
                       onChange={(v) => updateAsset(cashAsset.id, { balanceAtSimulationStart: v })}
                     />
                   </div>
-                  <div className="col-span-3 flex flex-col gap-0.5">
+                  <div className="col-span-4 flex flex-col gap-0.5">
                     <div className="flex items-center gap-1">
                       <input
                         type="number"
@@ -519,17 +521,17 @@ export default function HouseholdPanel({ config, onChange }: Props) {
               <div key={asset.id} className="bg-gray-50 rounded p-2 space-y-2">
                 {/* Account header row */}
                 <div className="grid grid-cols-12 gap-2 items-start">
-                  <div className="col-span-4 text-sm text-gray-700 pt-1">
+                  <div className="col-span-3 text-sm text-gray-700 pt-1">
                     {ASSET_TYPE_LABELS[asset.type]}
                   </div>
-                  <div className="col-span-4">
+                  <div className="col-span-3">
                     <CurrencyInput
                       value={asset.balanceAtSimulationStart}
                       onChange={(v) => updateAsset(asset.id, { balanceAtSimulationStart: v })}
                     />
                   </div>
                   {isMM ? (
-                    <div className="col-span-3 flex flex-col gap-0.5">
+                    <div className="col-span-4 flex flex-col gap-0.5">
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
@@ -548,8 +550,21 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                         <span className="text-xs text-gray-400">≈ {fmt.format(mmReserveTarget)}</span>
                       )}
                     </div>
+                  ) : (asset.type === 'retirementTraditional' || asset.type === 'retirementRoth') && config.household.length >= 2 ? (
+                    <div className="col-span-4">
+                      <select
+                        className="input text-sm w-full"
+                        value={asset.memberId ?? ''}
+                        onChange={(e) => updateAsset(asset.id, { memberId: e.target.value || undefined })}
+                      >
+                        <option value="">Household (primary)</option>
+                        {config.household.map((m) => (
+                          <option key={m.id} value={m.id}>{m.name || `Member ${config.household.indexOf(m) + 1}`}</option>
+                        ))}
+                      </select>
+                    </div>
                   ) : (
-                    <div className="col-span-3" />
+                    <div className="col-span-4" />
                   )}
                   <button
                     onClick={() => removeAsset(asset.id)}
@@ -577,9 +592,9 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
                   {asset.contributions.length > 0 && (
                     <div className="grid grid-cols-12 gap-2 px-1">
-                      <span className="col-span-3 text-xs text-gray-400">Start Age</span>
-                      <span className="col-span-3 text-xs text-gray-400">End Age</span>
-                      <span className="col-span-5 text-xs text-gray-400">Annual Amount</span>
+                      <span className="col-span-2 text-xs text-gray-400">Start Age</span>
+                      <span className="col-span-2 text-xs text-gray-400">End Age</span>
+                      <span className="col-span-2 text-xs text-gray-400">Annual Amount</span>
                       <span className="col-span-1" />
                     </div>
                   )}
@@ -588,14 +603,14 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     <div key={period.id} className="grid grid-cols-12 gap-2 items-center">
                       <input
                         type="number"
-                        className="col-span-3 input"
+                        className="col-span-2 input"
                         placeholder="0"
                         value={period.startAge || ''}
                         onChange={(e) => updateContribution(asset.id, period.id, { startAge: parseInt(e.target.value) || 0 })}
                       />
                       <input
                         type="number"
-                        className="col-span-3 input"
+                        className="col-span-2 input"
                         placeholder="End of sim"
                         value={period.endAge ?? ''}
                         onChange={(e) => {
@@ -603,7 +618,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                           updateContribution(asset.id, period.id, { endAge: val === '' ? undefined : parseInt(val) || undefined })
                         }}
                       />
-                      <div className="col-span-5">
+                      <div className="col-span-2">
                         <CurrencyInput
                           value={period.annualAmount}
                           onChange={(v) => updateContribution(asset.id, period.id, { annualAmount: v })}
@@ -665,9 +680,9 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                 <span className="col-span-2 text-xs text-gray-400">Name</span>
                 <span className="col-span-1 text-xs text-gray-400">Amount</span>
                 <span className="col-span-2 text-xs text-gray-400">Freq / Every</span>
-                <span className="col-span-2 text-xs text-gray-400">Inflation Adjusted?</span>
                 <span className="col-span-1 text-xs text-gray-400">Start</span>
                 <span className="col-span-1 text-xs text-gray-400">End</span>
+                <span className="col-span-2 text-xs text-gray-400">Inflation Adjusted?</span>
                 <span className="col-span-1" />
               </div>
             )}
@@ -718,13 +733,6 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     <option value="annual">Annual</option>
                   </select>
                 )}
-                <div className="col-span-2 flex justify-center">
-                  <input
-                    type="checkbox"
-                    checked={exp.inflationAdjusted}
-                    onChange={(e) => updateExpense(exp.id, { inflationAdjusted: e.target.checked })}
-                  />
-                </div>
                 <input
                   type="number"
                   className="col-span-1 input"
@@ -745,6 +753,13 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     updateExpense(exp.id, { endAge: val === '' ? undefined : parseInt(val) || undefined })
                   }}
                 />
+                <div className="col-span-2 flex justify-left">
+                  <input
+                    type="checkbox"
+                    checked={exp.inflationAdjusted}
+                    onChange={(e) => updateExpense(exp.id, { inflationAdjusted: e.target.checked })}
+                  />
+                </div>
                 <button onClick={() => removeExpense(exp.id)} className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center">×</button>
               </div>
             ))}

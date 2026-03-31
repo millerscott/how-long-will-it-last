@@ -52,6 +52,7 @@ export default function App() {
     // Ensure incomeType is set on all existing income sources (migration)
     incomeSources: (rawConfig.incomeSources ?? []).map((s) => ({ incomeType: 'wage' as const, ...s })),
     marketCrashes: rawConfig.marketCrashes ?? [],
+    rothConversionTargetBracket: rawConfig.rothConversionTargetBracket ?? null,
     // Ensure expenseType and frequency are set on all existing expenses (migration)
     expenses: (rawConfig.expenses ?? []).map((e) => ({
       ...(!(e as any).expenseType ? { expenseType: 'regular' as const } : {}),

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { projectFinances, findDepletionAge, applyWaterfall, draw529ForEducation, getEquityRateOverride } from './projection'
+import { projectFinances, findDepletionAge, applyWaterfall, draw529ForEducation, getEquityRateOverride, calculateRmd } from './projection'
+import { calculateRothConversionAmount } from './tax'
 import type { AppConfig, HouseholdMember, HouseholdAsset, RegularExpense, PeriodicExpense, EducationExpense, MarketCrash } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     ],
     assetRates: ZERO_RATES,
     marketCrashes: [],
+    rothConversionTargetBracket: null,
     ...overrides,
   }
 }
@@ -1047,5 +1049,369 @@ describe('market crash projection', () => {
     const brok53 = s53.assetBreakdown.find((a) => a.label === 'Taxable Brokerage')!.balance
     const brok54 = s54.assetBreakdown.find((a) => a.label === 'Taxable Brokerage')!.balance
     expect(brok54).toBeCloseTo(brok53 * 1.07, 2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Required Minimum Distributions (RMD)
+// ---------------------------------------------------------------------------
+
+describe('calculateRmd (unit)', () => {
+  function traditionalAsset(id: string, balance: number): HouseholdAsset {
+    return { id, type: 'retirementTraditional', balanceAtSimulationStart: balance, contributions: [] }
+  }
+
+  it('returns 0 when member is below RMD age (< 73)', () => {
+    const balances = new Map([['trad', 500_000]])
+    const assets: HouseholdAsset[] = [traditionalAsset('trad', 500_000)]
+    const household = [member({ ageAtSimulationStart: 70 })]
+    const result = calculateRmd(balances, assets, household, 2) // age 72
+    expect(result).toBe(0)
+    expect(balances.get('trad')).toBe(500_000) // unchanged
+  })
+
+  it('withdraws correct RMD at age 73 (divisor 26.5)', () => {
+    const balances = new Map([['trad', 265_000]])
+    const assets: HouseholdAsset[] = [traditionalAsset('trad', 265_000)]
+    const household = [member({ ageAtSimulationStart: 73 })]
+    const result = calculateRmd(balances, assets, household, 0) // age 73
+    expect(result).toBeCloseTo(10_000, 2) // 265,000 / 26.5
+    expect(balances.get('trad')).toBeCloseTo(255_000, 2)
+  })
+
+  it('uses correct divisor at age 90 (divisor 12.2)', () => {
+    const balances = new Map([['trad', 122_000]])
+    const assets: HouseholdAsset[] = [traditionalAsset('trad', 122_000)]
+    const household = [member({ ageAtSimulationStart: 90 })]
+    const result = calculateRmd(balances, assets, household, 0) // age 90
+    expect(result).toBeCloseTo(10_000, 2) // 122,000 / 12.2
+  })
+
+  it('withdraws proportionally from multiple traditional accounts', () => {
+    const balances = new Map([['trad1', 300_000], ['trad2', 100_000]])
+    const assets: HouseholdAsset[] = [traditionalAsset('trad1', 300_000), traditionalAsset('trad2', 100_000)]
+    const household = [member({ ageAtSimulationStart: 73 })]
+    const totalBalance = 400_000
+    const expectedRmd = totalBalance / 26.5
+    const result = calculateRmd(balances, assets, household, 0)
+    expect(result).toBeCloseTo(expectedRmd, 2)
+    // 75% from trad1, 25% from trad2
+    expect(balances.get('trad1')).toBeCloseTo(300_000 - expectedRmd * 0.75, 2)
+    expect(balances.get('trad2')).toBeCloseTo(100_000 - expectedRmd * 0.25, 2)
+  })
+
+  it('returns 0 when traditional balance is zero', () => {
+    const balances = new Map([['trad', 0]])
+    const assets: HouseholdAsset[] = [traditionalAsset('trad', 0)]
+    const household = [member({ ageAtSimulationStart: 75 })]
+    const result = calculateRmd(balances, assets, household, 0)
+    expect(result).toBe(0)
+  })
+
+  it('caps divisor at age 120 for very old members', () => {
+    const balances = new Map([['trad', 200_000]])
+    const assets: HouseholdAsset[] = [traditionalAsset('trad', 200_000)]
+    const household = [member({ ageAtSimulationStart: 125 })]
+    const result = calculateRmd(balances, assets, household, 0) // age 125
+    expect(result).toBeCloseTo(200_000 / 2.0, 2) // divisor 2.0 (age 120 cap)
+  })
+})
+
+describe('RMD integration (projectFinances)', () => {
+  function traditionalAsset(id: string, balance: number): HouseholdAsset {
+    return { id, type: 'retirementTraditional', balanceAtSimulationStart: balance, contributions: [] }
+  }
+
+  it('no RMD before age 73', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 71 })],
+      simulationYears: 2,
+      householdAssets: [
+        ...cashOnly(50_000),
+        traditionalAsset('trad', 500_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s71 = snaps.find((s) => s.age === 71)!
+    const s72 = snaps.find((s) => s.age === 72)!
+    expect(s71.rmdWithdrawn).toBe(0)
+    expect(s72.rmdWithdrawn).toBe(0)
+  })
+
+  it('RMD kicks in at age 73 and appears in income', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 72 })],
+      simulationYears: 2,
+      householdAssets: [
+        ...cashOnly(50_000),
+        traditionalAsset('trad', 265_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s72 = snaps.find((s) => s.age === 72)!
+    const s73 = snaps.find((s) => s.age === 73)!
+    expect(s72.rmdWithdrawn).toBe(0)
+    expect(s73.rmdWithdrawn).toBeCloseTo(265_000 / 26.5, 0) // ~$10,000
+    expect(s73.income).toBeCloseTo(265_000 / 26.5, 0)
+  })
+
+  it('RMD appears in income breakdown', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 73 })],
+      simulationYears: 1,
+      householdAssets: [
+        ...cashOnly(50_000),
+        traditionalAsset('trad', 500_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s73 = snaps.find((s) => s.age === 73)!
+    const rmdLine = s73.incomeBreakdown.find((i) => i.label === 'Required Minimum Distribution')
+    expect(rmdLine).toBeDefined()
+    expect(rmdLine!.amount).toBeCloseTo(500_000 / 26.5, 0)
+  })
+
+  it('RMD is taxed as ordinary income (traditionalIraTax > 0)', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 73 })],
+      simulationYears: 1,
+      householdAssets: [
+        ...cashOnly(50_000),
+        traditionalAsset('trad', 500_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s73 = snaps.find((s) => s.age === 73)!
+    expect(s73.traditionalIraTax).toBeGreaterThan(0)
+  })
+
+  it('RMD reduces traditional account balance', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 73 })],
+      simulationYears: 2,
+      householdAssets: [
+        ...cashOnly(50_000),
+        traditionalAsset('trad', 500_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s73 = snaps.find((s) => s.age === 73)!
+    const tradBalance73 = s73.assetBreakdown
+      .filter((a) => a.label === 'Traditional Retirement')
+      .reduce((sum, a) => sum + a.balance, 0)
+    expect(tradBalance73).toBeLessThan(500_000)
+  })
+
+  it('Roth accounts are not touched by RMD calculation (unit level)', () => {
+    // Verify calculateRmd only affects traditional accounts
+    const balances = new Map([['trad', 500_000], ['roth', 200_000]])
+    const assets: HouseholdAsset[] = [
+      traditionalAsset('trad', 500_000),
+      { id: 'roth', type: 'retirementRoth', balanceAtSimulationStart: 200_000, contributions: [] } as HouseholdAsset,
+    ]
+    const household = [member({ ageAtSimulationStart: 73 })]
+    calculateRmd(balances, assets, household, 0)
+    expect(balances.get('roth')).toBe(200_000) // Roth unchanged
+    expect(balances.get('trad')).toBeLessThan(500_000) // Traditional reduced
+  })
+
+  it('two spouses each get their own RMD from their linked accounts', () => {
+    const spouse1 = member({ id: 'm1', ageAtSimulationStart: 75 })
+    const spouse2 = member({ id: 'm2', ageAtSimulationStart: 73 })
+    const assets: HouseholdAsset[] = [
+      { ...traditionalAsset('trad1', 246_000), memberId: 'm1' }, // RMD = 246k / 24.6 = 10k
+      { ...traditionalAsset('trad2', 265_000), memberId: 'm2' }, // RMD = 265k / 26.5 = 10k
+    ]
+    const balances = new Map([['trad1', 246_000], ['trad2', 265_000]])
+    const result = calculateRmd(balances, assets, [spouse1, spouse2], 0)
+    expect(result).toBeCloseTo(20_000, 0) // both RMDs combined
+    expect(balances.get('trad1')).toBeCloseTo(236_000, 0)
+    expect(balances.get('trad2')).toBeCloseTo(255_000, 0)
+  })
+
+  it('only one spouse over 73 triggers RMD for their account only', () => {
+    const spouse1 = member({ id: 'm1', ageAtSimulationStart: 73 })
+    const spouse2 = member({ id: 'm2', ageAtSimulationStart: 65 })
+    const assets: HouseholdAsset[] = [
+      { ...traditionalAsset('trad1', 265_000), memberId: 'm1' },
+      { ...traditionalAsset('trad2', 300_000), memberId: 'm2' },
+    ]
+    const balances = new Map([['trad1', 265_000], ['trad2', 300_000]])
+    const result = calculateRmd(balances, assets, [spouse1, spouse2], 0)
+    expect(result).toBeCloseTo(265_000 / 26.5, 0) // only spouse1's RMD
+    expect(balances.get('trad1')).toBeCloseTo(265_000 - 265_000 / 26.5, 0)
+    expect(balances.get('trad2')).toBe(300_000) // spouse2 untouched
+  })
+
+  it('unlinked accounts belong to primary member for RMD', () => {
+    const spouse1 = member({ id: 'm1', ageAtSimulationStart: 73 })
+    const spouse2 = member({ id: 'm2', ageAtSimulationStart: 73 })
+    const assets: HouseholdAsset[] = [
+      traditionalAsset('unlinked', 265_000), // no memberId → primary (m1)
+      { ...traditionalAsset('linked', 265_000), memberId: 'm2' },
+    ]
+    const balances = new Map([['unlinked', 265_000], ['linked', 265_000]])
+    const result = calculateRmd(balances, assets, [spouse1, spouse2], 0)
+    // m1 owns 'unlinked' (265k / 26.5 = 10k), m2 owns 'linked' (265k / 26.5 = 10k)
+    expect(result).toBeCloseTo(20_000, 0)
+  })
+
+  it('RMD indicator shows in snapshot', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 73 })],
+      simulationYears: 1,
+      householdAssets: [
+        ...cashOnly(50_000),
+        traditionalAsset('trad', 500_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s73 = snaps.find((s) => s.age === 73)!
+    expect(s73.rmdWithdrawn).toBeGreaterThan(0)
+  })
+
+  it('RMD + waterfall: both withdrawals are taxed correctly', () => {
+    // High expenses force waterfall from traditional accounts ON TOP of RMD
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 73 })],
+      simulationYears: 1,
+      expenses: [{
+        id: 'e1', name: 'Living', amount: 80_000, expenseType: 'regular' as const,
+        frequency: 'annual' as const, inflationAdjusted: false,
+      }],
+      householdAssets: [
+        ...cashOnly(10_000),
+        traditionalAsset('trad', 500_000),
+      ],
+    })
+    const snaps = projectFinances(cfg)
+    const s73 = snaps.find((s) => s.age === 73)!
+    // RMD should be ~18,868 (500k / 26.5)
+    expect(s73.rmdWithdrawn).toBeCloseTo(500_000 / 26.5, 0)
+    // traditionalIraTax should cover BOTH RMD and any waterfall traditional withdrawal
+    expect(s73.traditionalIraTax).toBeGreaterThan(0)
+    // Income breakdown should have both RMD and potentially a separate waterfall line
+    const rmdLine = s73.incomeBreakdown.find((i) => i.label === 'Required Minimum Distribution')
+    expect(rmdLine).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Roth Conversions
+// ---------------------------------------------------------------------------
+
+describe('calculateRothConversionAmount (unit)', () => {
+  it('returns 0 when no traditional balance', () => {
+    expect(calculateRothConversionAmount(50_000, 0, 'single', 0.22)).toBe(0)
+  })
+
+  it('fills to 12% bracket ceiling (single)', () => {
+    // Single 12% bracket ceiling = $50,400 taxable; std deduction = $16,100
+    // gross ceiling = $66,500; if current income = $40,000, headroom = $26,500
+    const result = calculateRothConversionAmount(40_000, 200_000, 'single', 0.12)
+    expect(result).toBeCloseTo(50_400 - Math.max(0, 40_000 - 16_100), 0) // 50,400 - 23,900 = 26,500
+  })
+
+  it('fills to 22% bracket ceiling (MFJ)', () => {
+    // MFJ 22% ceiling = $211,400 taxable; std deduction = $32,200
+    // gross ceiling = $243,600; current income = $80,000 → taxable = $47,800; headroom = $163,600
+    const result = calculateRothConversionAmount(80_000, 500_000, 'marriedFilingJointly', 0.22)
+    expect(result).toBeCloseTo(211_400 - Math.max(0, 80_000 - 32_200), 0)
+  })
+
+  it('caps conversion at traditional balance', () => {
+    // If headroom > balance, only convert what's available
+    const result = calculateRothConversionAmount(0, 5_000, 'single', 0.22)
+    expect(result).toBe(5_000)
+  })
+
+  it('returns 0 when already above bracket ceiling', () => {
+    // Income already above 12% ceiling
+    const result = calculateRothConversionAmount(200_000, 100_000, 'single', 0.12)
+    expect(result).toBe(0)
+  })
+})
+
+describe('Roth conversion integration (projectFinances)', () => {
+  function tradAsset(balance: number): HouseholdAsset {
+    return { id: 'trad', type: 'retirementTraditional', balanceAtSimulationStart: balance, contributions: [] }
+  }
+  function rothAsset(balance = 0): HouseholdAsset {
+    return { id: 'roth', type: 'retirementRoth', balanceAtSimulationStart: balance, contributions: [] }
+  }
+
+  it('no conversion when disabled', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 60 })],
+      simulationYears: 1,
+      householdAssets: [...cashOnly(100_000), tradAsset(500_000), rothAsset()],
+      rothConversionTargetBracket: null,
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].rothConverted).toBe(0)
+  })
+
+  it('conversion occurs and reduces traditional, increases Roth', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 60 })],
+      simulationYears: 1,
+      householdAssets: [...cashOnly(100_000), tradAsset(500_000), rothAsset(0)],
+      rothConversionTargetBracket: 0.12,
+    })
+    const snaps = projectFinances(cfg)
+    const s = snaps[0]
+    expect(s.rothConverted).toBeGreaterThan(0)
+    const tradBalance = s.assetBreakdown.find((a) => a.label === 'Retirement Account (Traditional)')!.balance
+    const rothBalance = s.assetBreakdown.find((a) => a.label === 'Retirement Account (Roth)')!.balance
+    expect(tradBalance).toBeLessThan(500_000)
+    expect(rothBalance).toBeGreaterThan(0)
+    // Roth gain ≈ traditional loss (before appreciation)
+    expect(rothBalance).toBeCloseTo(500_000 - tradBalance, -2)
+  })
+
+  it('conversion is taxed (traditionalIraTax > 0)', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 60 })],
+      simulationYears: 1,
+      householdAssets: [...cashOnly(100_000), tradAsset(500_000), rothAsset()],
+      rothConversionTargetBracket: 0.22,
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].traditionalIraTax).toBeGreaterThan(0)
+  })
+
+  it('conversion appears in income breakdown', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 60 })],
+      simulationYears: 1,
+      householdAssets: [...cashOnly(100_000), tradAsset(500_000), rothAsset()],
+      rothConversionTargetBracket: 0.12,
+    })
+    const snaps = projectFinances(cfg)
+    const line = snaps[0].incomeBreakdown.find((i) => i.label === 'Roth Conversion')
+    expect(line).toBeDefined()
+    expect(line!.amount).toBeCloseTo(snaps[0].rothConverted, 0)
+  })
+
+  it('no conversion at or after RMD age (73)', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 73 })],
+      simulationYears: 1,
+      householdAssets: [...cashOnly(100_000), tradAsset(500_000), rothAsset()],
+      rothConversionTargetBracket: 0.22,
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].rothConverted).toBe(0)
+  })
+
+  it('no conversion when no Roth account exists', () => {
+    const cfg = baseConfig({
+      household: [member({ ageAtSimulationStart: 60 })],
+      simulationYears: 1,
+      householdAssets: [...cashOnly(100_000), tradAsset(500_000)],
+      rothConversionTargetBracket: 0.22,
+    })
+    const snaps = projectFinances(cfg)
+    expect(snaps[0].rothConverted).toBe(0)
   })
 })

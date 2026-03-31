@@ -89,6 +89,8 @@ export interface ContributionPeriod {
 export interface HouseholdAsset {
   id: string
   type: AssetType
+  /** For retirement accounts: the household member this account belongs to. Unset accounts are attributed to the primary member. */
+  memberId?: string
   balanceAtSimulationStart: number
   contributions: ContributionPeriod[]
   /** Months of annual expenses to hold as a minimum reserve. Cash and MM only; undefined or 0 = no reserve. */
@@ -126,6 +128,8 @@ export interface AppConfig {
   householdAssets: HouseholdAsset[]
   assetRates: AssetRates
   marketCrashes: MarketCrash[]
+  /** Fill traditional IRA up to this bracket ceiling each year via Roth conversion. Null = disabled. */
+  rothConversionTargetBracket: 0.12 | 0.22 | 0.24 | null
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -147,4 +151,5 @@ export const DEFAULT_CONFIG: AppConfig = {
     educationSavings529: 0.07,
   },
   marketCrashes: [],
+  rothConversionTargetBracket: null,
 }

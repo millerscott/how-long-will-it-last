@@ -99,6 +99,12 @@ export default function ProjectionTable({ snapshots }: Props) {
                   <td className="py-2 pr-4 font-medium">{s.year}</td>
                   <td className="py-2 pr-4 text-gray-500">
                     {s.age}
+                    {s.rmdWithdrawn > 0 && (
+                      <span className="ml-1 text-purple-500 text-xs" title="RMD taken this year">R</span>
+                    )}
+                    {s.rothConverted > 0 && (
+                      <span className="ml-1 text-emerald-600 text-xs" title="Roth conversion this year">↻</span>
+                    )}
                     {s.marketCrashActive && (
                       <span className="ml-1 text-orange-500 text-xs" title="Market crash/recovery active">↓</span>
                     )}

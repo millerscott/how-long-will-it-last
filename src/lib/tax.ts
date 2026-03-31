@@ -207,6 +207,30 @@ export function calculateTaxableSocialSecurity(
 }
 
 // ---------------------------------------------------------------------------
+// Roth conversion — bracket headroom calculation
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns how much traditional IRA balance can be converted to Roth while
+ * staying within the target federal bracket. Conversion fills the bracket
+ * exactly: if current taxable income already exceeds the ceiling, returns 0.
+ * Does not model the SS knock-on effect (handled separately in the projection loop).
+ */
+export function calculateRothConversionAmount(
+  grossOrdinaryIncome: number,
+  traditionalBalance: number,
+  filingStatus: FilingStatus,
+  targetRate: 0.12 | 0.22 | 0.24,
+): number {
+  if (traditionalBalance <= 0) return 0
+  const stdDeduction = FEDERAL_STANDARD_DEDUCTION[filingStatus]
+  const currentTaxable = Math.max(0, grossOrdinaryIncome - stdDeduction)
+  const ceiling = FEDERAL_BRACKETS[filingStatus].find((b) => b.rate === targetRate)?.upTo ?? 0
+  const headroom = Math.max(0, ceiling - currentTaxable)
+  return Math.min(headroom, traditionalBalance)
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — add more states here as needed
 // ---------------------------------------------------------------------------
 

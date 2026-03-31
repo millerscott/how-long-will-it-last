@@ -55,6 +55,9 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
   if (config.marketCrashes.length > 0) {
     summaryParts.push(`${config.marketCrashes.length} market scenario${config.marketCrashes.length !== 1 ? 's' : ''}`)
   }
+  if (config.rothConversionTargetBracket !== null) {
+    summaryParts.push(`Roth conversions to ${(config.rothConversionTargetBracket * 100).toFixed(0)}% bracket`)
+  }
   const summary = summaryParts.join(' · ')
 
   return (
@@ -96,6 +99,22 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                   value={config.simulationYears}
                   onChange={(e) => update({ simulationYears: parseInt(e.target.value) || 1 })}
                 />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Optimize Roth Conversions</label>
+                <select
+                  className="input w-full"
+                  value={config.rothConversionTargetBracket ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    update({ rothConversionTargetBracket: v === '' ? null : (parseFloat(v) as 0.12 | 0.22 | 0.24) })
+                  }}
+                >
+                  <option value="">Off</option>
+                  <option value="0.12">Fill to 12% bracket</option>
+                  <option value="0.22">Fill to 22% bracket</option>
+                  <option value="0.24">Fill to 24% bracket</option>
+                </select>
               </div>
             </div>
           </div>
