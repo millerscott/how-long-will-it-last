@@ -251,6 +251,9 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                       </option>
                     ))}
                   </select>
+                  {member.state !== 'OR' && (
+                    <p className="text-xs text-amber-600 mt-1">State tax for this state is not yet supported</p>
+                  )}
                 </div>
 
                 <button
@@ -457,7 +460,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
             <div className="grid grid-cols-12 gap-2 px-1">
               <span className="col-span-4 text-xs text-gray-400">Account Type</span>
               <span className="col-span-4 text-xs text-gray-400">Balance at Start</span>
-              <span className="col-span-3 text-xs text-gray-400">Reserve</span>
+              <span className="col-span-3 text-xs text-gray-400">Min. Balance (months of expenses)</span>
               <span className="col-span-1" />
             </div>
 
@@ -559,12 +562,12 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                 {/* Contribution periods */}
                 <div className="pl-2 border-l-2 border-gray-200 ml-1 space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-400 font-medium">Contribution Periods</span>
+                    <span className="text-xs text-gray-400 font-medium">Annual Contributions (by age range)</span>
                     <button
                       onClick={() => addContribution(asset.id)}
                       className="text-xs text-indigo-500 hover:text-indigo-700"
                     >
-                      + Add period
+                      + Add contribution period
                     </button>
                   </div>
 
@@ -660,9 +663,9 @@ export default function HouseholdPanel({ config, onChange }: Props) {
               <div className="grid grid-cols-12 gap-2 px-1 mb-1">
                 <span className="col-span-2 text-xs text-gray-400">Type</span>
                 <span className="col-span-2 text-xs text-gray-400">Name</span>
-                <span className="col-span-2 text-xs text-gray-400">Amount</span>
+                <span className="col-span-1 text-xs text-gray-400">Amount</span>
                 <span className="col-span-2 text-xs text-gray-400">Freq / Every</span>
-                <span className="col-span-1 text-xs text-gray-400">Infl.</span>
+                <span className="col-span-2 text-xs text-gray-400">Inflation Adjusted?</span>
                 <span className="col-span-1 text-xs text-gray-400">Start</span>
                 <span className="col-span-1 text-xs text-gray-400">End</span>
                 <span className="col-span-1" />
@@ -685,16 +688,13 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   value={exp.name}
                   onChange={(e) => updateExpense(exp.id, { name: e.target.value })}
                 />
-                <div className="col-span-2 relative">
-                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">$</span>
-                  <input
-                    type="number"
-                    className="input pl-4 w-full"
-                    placeholder="0"
-                    value={exp.amount || ''}
-                    onChange={(e) => updateExpense(exp.id, { amount: parseFloat(e.target.value) || 0 })}
-                  />
-                </div>
+                <input
+                  type="number"
+                  className="col-span-1 input"
+                  placeholder="0"
+                  value={exp.amount || ''}
+                  onChange={(e) => updateExpense(exp.id, { amount: parseFloat(e.target.value) || 0 })}
+                />
                 {exp.expenseType === 'periodic' ? (
                   <div className="col-span-2 flex items-center gap-1">
                     <input
@@ -718,7 +718,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     <option value="annual">Annual</option>
                   </select>
                 )}
-                <div className="col-span-1 flex justify-center">
+                <div className="col-span-2 flex justify-center">
                   <input
                     type="checkbox"
                     checked={exp.inflationAdjusted}

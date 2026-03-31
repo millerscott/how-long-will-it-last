@@ -104,17 +104,15 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
           <div>
             <h3 className="text-sm font-semibold text-gray-600 mb-1">Asset Appreciation Rates</h3>
             <p className="text-xs text-gray-400 mb-3">Annual appreciation rate assumed for each account type.</p>
-            <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-x-4 gap-y-3">
               {(Object.keys(config.assetRates) as (keyof AssetRates)[]).map((type) => (
-                <div key={type} className="flex items-center gap-4">
-                  <span className="text-sm text-gray-700 w-64 shrink-0">{ASSET_TYPE_LABELS[type]}</span>
-                  <PercentField
-                    label=""
-                    value={config.assetRates[type]}
-                    className="w-32"
-                    onChange={(v) => updateRates({ [type]: v })}
-                  />
-                </div>
+                <PercentField
+                  key={type}
+                  label={ASSET_TYPE_LABELS[type]}
+                  value={config.assetRates[type]}
+                  className="w-24"
+                  onChange={(v) => updateRates({ [type]: v })}
+                />
               ))}
             </div>
           </div>
