@@ -110,7 +110,6 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                   key={type}
                   label={ASSET_TYPE_LABELS[type]}
                   value={config.assetRates[type]}
-                  className="w-24"
                   onChange={(v) => updateRates({ [type]: v })}
                 />
               ))}
