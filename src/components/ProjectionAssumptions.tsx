@@ -235,12 +235,24 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
                 onChange={(v) => update({ ssCola: v })}
               />
               {(Object.keys(config.assetRates) as (keyof AssetRates)[]).map((type) => (
-                <PercentField
-                  key={type}
-                  label={ASSET_TYPE_LABELS[type]} 
-                  value={config.assetRates[type]}
-                  onChange={(v) => updateRates({ [type]: v })}
-                />
+                <div key={type}>
+                  <PercentField
+                    label={ASSET_TYPE_LABELS[type]}
+                    value={config.assetRates[type]}
+                    onChange={(v) => updateRates({ [type]: v })}
+                  />
+                  {type === 'taxableBrokerage' && (
+                    <button
+                      onClick={() => {
+                        const rate = config.assetRates.taxableBrokerage
+                        updateRates({ retirementTraditional: rate, retirementRoth: rate, educationSavings529: rate })
+                      }}
+                      className="text-[10px] text-indigo-500 hover:text-indigo-700 mt-0.5 cursor-pointer"
+                    >
+                      Sync rate to all equity accounts
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           </div>
