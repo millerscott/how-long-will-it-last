@@ -278,9 +278,11 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
 
     // --- Income (tracked per member for state tax purposes) ---
     // SS income is tracked separately: different growth rate, different tax treatment, no FICA
-    let wageIncome = 0
+    let wageIncome = 0   // all non-SS income (wages + other) — taxable as ordinary income
     let ssIncome = 0
-    const wageByMember = new Map<string, number>()
+    let w2WageIncome = 0 // only actual wages (incomeType === 'wage') — subject to FICA
+    const wageByMember = new Map<string, number>()     // all non-SS income by member (for state tax)
+    const w2WageByMember = new Map<string, number>()   // only W-2 wages by member (for FICA)
     const incomeBreakdown: IncomeBreakdownItem[] = []
 
     for (const src of incomeSources) {
@@ -299,6 +301,10 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
         incomeBreakdown.push({ label: src.name, amount })
         wageIncome += amount
         wageByMember.set(src.memberId, (wageByMember.get(src.memberId) ?? 0) + amount)
+        if (src.incomeType === 'wage') {
+          w2WageIncome += amount
+          w2WageByMember.set(src.memberId, (w2WageByMember.get(src.memberId) ?? 0) + amount)
+        }
       }
     }
     if (ssIncome > 0) {
@@ -333,9 +339,9 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const taxableSs = calculateTaxableSocialSecurity(wageIncome + interestIncome, ssIncome, filingStatus)
     const federalIncomeTax = calculateFederalTax(wageIncome + interestIncome + taxableSs, filingStatus)
 
-    // FICA: applied only to wage income, not SS or interest
-    let ficaTax = calculateAdditionalMedicare(wageIncome, filingStatus)
-    for (const memberWages of wageByMember.values()) {
+    // FICA: applied only to W-2 wages — not SS, interest, or "other" income
+    let ficaTax = calculateAdditionalMedicare(w2WageIncome, filingStatus)
+    for (const memberWages of w2WageByMember.values()) {
       ficaTax += calculateFicaPerEarner(memberWages)
     }
 
@@ -487,7 +493,10 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     // MAGI uses the original taxableSs here; it will be corrected in the traditionalIraFederalTax step below.
     const magi = baseOrdinaryIncome + brokerageWithdrawn + totalTraditionalWithdrawn
     const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
-    const stateCapitalGainsTax = calculateStateTax(brokerageWithdrawn, primaryState, filingStatus)
+    const stateCapitalGainsTax = brokerageWithdrawn > 0
+      ? calculateStateTax(wageIncome + interestIncome + brokerageWithdrawn, primaryState, filingStatus)
+        - calculateStateTax(wageIncome + interestIncome, primaryState, filingStatus)
+      : 0
 
     // 3c. Traditional IRA withdrawal — taxed as ordinary income, with SS taxability recalculated
     // IRA withdrawals increase provisional income, which can push more SS benefits into taxable territory.
@@ -548,7 +557,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       stateIncomeTax: stateIncomeTax + stateCapitalGainsTax,
       expenses: expenseTotal,
       expenseBreakdown,
-      netCashFlow,
+      netCashFlow: netCashFlow - postWaterfallTaxes,
       totalAssets: Math.max(0, totalAssets),
       assetBreakdown,
       rmdWithdrawn,

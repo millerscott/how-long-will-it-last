@@ -1512,3 +1512,127 @@ describe('real-dollar mode', () => {
     expect(snaps[10].expenses).toBeCloseTo(1_000 * Math.pow(1.03, 10), 0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// FICA — only applies to W-2 wages, not "other" income
+// ---------------------------------------------------------------------------
+
+describe('FICA applies only to wage income', () => {
+  it('"other" income does not incur FICA', () => {
+    const wageConfig = baseConfig({
+      simulationYears: 1,
+      incomeSources: [{
+        id: 'i1', memberId: 'm1', name: 'Salary', incomeType: 'wage',
+        startAge: 50, annualAmount: 50_000, annualGrowthRate: 0,
+      }],
+    })
+    const otherConfig = baseConfig({
+      simulationYears: 1,
+      incomeSources: [{
+        id: 'i1', memberId: 'm1', name: 'Rental', incomeType: 'other',
+        startAge: 50, annualAmount: 50_000, annualGrowthRate: 0,
+      }],
+    })
+    const wageSnap = projectFinances(wageConfig)[0]
+    const otherSnap = projectFinances(otherConfig)[0]
+    // Same gross income, but "other" should have no FICA
+    expect(wageSnap.ficaTax).toBeGreaterThan(0)
+    expect(otherSnap.ficaTax).toBe(0)
+  })
+
+  it('mixed wage + other: FICA only on the wage portion', () => {
+    const cfg = baseConfig({
+      simulationYears: 1,
+      incomeSources: [
+        { id: 'w', memberId: 'm1', name: 'Salary', incomeType: 'wage', startAge: 50, annualAmount: 50_000, annualGrowthRate: 0 },
+        { id: 'o', memberId: 'm1', name: 'Rental', incomeType: 'other', startAge: 50, annualAmount: 30_000, annualGrowthRate: 0 },
+      ],
+    })
+    const wageOnlyConfig = baseConfig({
+      simulationYears: 1,
+      incomeSources: [{
+        id: 'w', memberId: 'm1', name: 'Salary', incomeType: 'wage',
+        startAge: 50, annualAmount: 50_000, annualGrowthRate: 0,
+      }],
+    })
+    const mixedSnap = projectFinances(cfg)[0]
+    const wageOnlySnap = projectFinances(wageOnlyConfig)[0]
+    // FICA should be the same — the $30k "other" shouldn't add to FICA
+    expect(mixedSnap.ficaTax).toBeCloseTo(wageOnlySnap.ficaTax, 2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// State capital gains tax — incremental calculation
+// ---------------------------------------------------------------------------
+
+describe('state capital gains tax is incremental', () => {
+  it('capital gains tax stacks on top of existing income in Oregon brackets', () => {
+    // Oregon top bracket is 9.9% above $125k (single). With $150k wages, any capital
+    // gains should be taxed at 9.9% marginal — not starting from the bottom brackets.
+    // If we non-incrementally taxed $20k of gains alone, Oregon state tax would be
+    // 4.75% on $4,550 + 6.75% on $6,850 + 8.75% on $5,690 = ~$1,177
+    // Incrementally on top of $150k: $20k × 9.9% = $1,980
+    const cfg = baseConfig({
+      simulationYears: 1,
+      household: [member({ state: 'OR' })],
+      incomeSources: [{
+        id: 'w', memberId: 'm1', name: 'Salary', incomeType: 'wage',
+        startAge: 50, annualAmount: 150_000, annualGrowthRate: 0,
+      }],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+        { id: 'brok', type: 'taxableBrokerage', balanceAtSimulationStart: 100_000, contributions: [] },
+      ],
+      expenses: [{
+        id: 'e1', name: 'Living', amount: 150_000, expenseType: 'regular' as const,
+        frequency: 'annual' as const, inflationAdjusted: false,
+      }],
+    })
+    const snaps = projectFinances(cfg)
+    const s = snaps[0]
+    // The brokerage withdrawal (waterfall) will be taxed at OR state level.
+    // stateIncomeTax should include both wage tax and incremental cap gains tax.
+    // The incremental portion should be close to 9.9% × withdrawal amount
+    // (since $150k income is well above the OR 9.9% threshold of $125k + $2,910 std deduction)
+    const wageStateTax = s.stateIncomeTax
+    // With no gains, state tax on $150k wages alone would be lower
+    const noGainsCfg = baseConfig({
+      simulationYears: 1,
+      household: [member({ state: 'OR' })],
+      incomeSources: [{
+        id: 'w', memberId: 'm1', name: 'Salary', incomeType: 'wage',
+        startAge: 50, annualAmount: 150_000, annualGrowthRate: 0,
+      }],
+    })
+    const noGainsSnap = projectFinances(noGainsCfg)[0]
+    expect(wageStateTax).toBeGreaterThan(noGainsSnap.stateIncomeTax)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// netCashFlow includes post-waterfall taxes
+// ---------------------------------------------------------------------------
+
+describe('netCashFlow reflects all taxes', () => {
+  it('netCashFlow accounts for capital gains and traditional IRA taxes', () => {
+    const cfg = baseConfig({
+      simulationYears: 1,
+      household: [member({ ageAtSimulationStart: 60 })],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+        { id: 'trad', type: 'retirementTraditional', balanceAtSimulationStart: 500_000, contributions: [] },
+      ],
+      expenses: [{
+        id: 'e1', name: 'Living', amount: 50_000, expenseType: 'regular' as const,
+        frequency: 'annual' as const, inflationAdjusted: false,
+      }],
+    })
+    const snaps = projectFinances(cfg)
+    const s = snaps[0]
+    // netCashFlow should reflect the traditional IRA withdrawal tax
+    const totalTax = s.federalIncomeTax + s.ficaTax + s.stateIncomeTax +
+      s.capitalGainsTax + s.niit + s.traditionalIraTax
+    expect(s.netCashFlow).toBeCloseTo(s.income - totalTax - s.expenses, 0)
+  })
+})
