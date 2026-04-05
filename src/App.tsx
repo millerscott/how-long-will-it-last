@@ -48,29 +48,45 @@ function createDefaultStore(): SimulationStore {
   }
 }
 
-function migrateOrDefault(): SimulationStore {
-  const legacyRaw = localStorage.getItem('hlwil-config')
-  if (legacyRaw) {
-    try {
-      const legacyConfig = JSON.parse(legacyRaw) as AppConfig
-      const id = makeId()
-      const store: SimulationStore = {
-        activeId: id,
-        simulations: [{
-          id,
-          name: 'My Simulation',
-          config: legacyConfig,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        }],
-      }
-      localStorage.removeItem('hlwil-config')
-      return store
-    } catch {
-      // Corrupted data, fall through to default
+// Run migration eagerly at module load so localStorage side-effects don't
+// occur inside a React state initializer (which strict mode double-invokes).
+const STORE_KEY = 'hlwil-simulations'
+const LEGACY_KEY = 'hlwil-config'
+
+;(() => {
+  if (localStorage.getItem(STORE_KEY)) return
+  const legacyRaw = localStorage.getItem(LEGACY_KEY)
+  if (!legacyRaw) return
+  try {
+    const legacyConfig = JSON.parse(legacyRaw) as AppConfig
+    const id = makeId()
+    const store: SimulationStore = {
+      activeId: id,
+      simulations: [{
+        id,
+        name: 'My Simulation',
+        config: legacyConfig,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      }],
     }
+    localStorage.setItem(STORE_KEY, JSON.stringify(store))
+    localStorage.removeItem(LEGACY_KEY)
+  } catch {
+    // Corrupted data — useLocalStorage will fall back to default
   }
-  return createDefaultStore()
+})()
+
+function uniqueName(desired: string, existing: string[], excludeId?: string): string {
+  const taken = new Set(existing)
+  if (excludeId === undefined && !taken.has(desired)) return desired
+  let name = desired
+  let i = 2
+  while (taken.has(name)) {
+    name = `${desired} (${i})`
+    i++
+  }
+  return name
 }
 
 /** Apply DEFAULT_CONFIG deep-merge and migrations to a raw AppConfig */
@@ -111,7 +127,7 @@ function mergeWithDefaults(rawConfig: AppConfig): AppConfig {
 export { mergeWithDefaults }
 
 export default function App() {
-  const [store, setStore] = useLocalStorage<SimulationStore>('hlwil-simulations', migrateOrDefault())
+  const [store, setStore] = useLocalStorage<SimulationStore>(STORE_KEY, createDefaultStore())
   const [tab, setTab] = useLocalStorage<Tab>('hlwil-tab', 'household')
 
   const activeSimulation = store.simulations.find((s) => s.id === store.activeId) ?? store.simulations[0]
@@ -131,17 +147,17 @@ export default function App() {
   const createSimulation = useCallback((name: string, fromConfig?: AppConfig) => {
     const id = makeId()
     const now = Date.now()
-    const sim: SavedSimulation = {
-      id,
-      name,
-      config: fromConfig ?? DEFAULT_CONFIG,
-      createdAt: now,
-      updatedAt: now,
-    }
-    setStore((prev) => ({
-      activeId: id,
-      simulations: [...prev.simulations, sim],
-    }))
+    setStore((prev) => {
+      const finalName = uniqueName(name, prev.simulations.map((s) => s.name))
+      const sim: SavedSimulation = {
+        id,
+        name: finalName,
+        config: fromConfig ?? DEFAULT_CONFIG,
+        createdAt: now,
+        updatedAt: now,
+      }
+      return { activeId: id, simulations: [...prev.simulations, sim] }
+    })
   }, [setStore])
 
   const loadSimulation = useCallback((id: string) => {
@@ -160,12 +176,16 @@ export default function App() {
   }, [setStore])
 
   const renameSimulation = useCallback((id: string, name: string) => {
-    setStore((prev) => ({
-      ...prev,
-      simulations: prev.simulations.map((s) =>
-        s.id === id ? { ...s, name } : s
-      ),
-    }))
+    setStore((prev) => {
+      const otherNames = prev.simulations.filter((s) => s.id !== id).map((s) => s.name)
+      const finalName = uniqueName(name, otherNames)
+      return {
+        ...prev,
+        simulations: prev.simulations.map((s) =>
+          s.id === id ? { ...s, name: finalName } : s
+        ),
+      }
+    })
   }, [setStore])
 
   const duplicateSimulation = useCallback((id: string) => {
@@ -174,9 +194,10 @@ export default function App() {
       if (!source) return prev
       const newId = makeId()
       const now = Date.now()
+      const finalName = uniqueName(`${source.name} (copy)`, prev.simulations.map((s) => s.name))
       const copy: SavedSimulation = {
         id: newId,
-        name: `${source.name} (copy)`,
+        name: finalName,
         config: structuredClone(source.config),
         createdAt: now,
         updatedAt: now,

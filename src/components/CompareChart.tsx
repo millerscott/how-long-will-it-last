@@ -65,21 +65,17 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export default function CompareChart({ simulations, mergeWithDefaults }: Props) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(simulations.map((s) => s.id)))
+  const [excluded, setExcluded] = useState<Set<string>>(() => new Set())
 
-  // Keep selected set in sync when simulations change
-  const validSelected = useMemo(() => {
-    const validIds = new Set(simulations.map((s) => s.id))
-    const filtered = new Set([...selected].filter((id) => validIds.has(id)))
-    // If nothing selected, select all
-    return filtered.size > 0 ? filtered : validIds
-  }, [simulations, selected])
+  const includedSims = useMemo(
+    () => simulations.filter((s) => !excluded.has(s.id)),
+    [simulations, excluded],
+  )
 
   const chartData = useMemo(() => {
     const results: { name: string; snapshots: { age: number; totalAssets: number }[] }[] = []
 
-    for (const sim of simulations) {
-      if (!validSelected.has(sim.id)) continue
+    for (const sim of includedSims) {
       const config = mergeWithDefaults(sim.config)
       const snaps = projectFinances(config)
       results.push({
@@ -88,7 +84,6 @@ export default function CompareChart({ simulations, mergeWithDefaults }: Props) 
       })
     }
 
-    // Build chart data: one entry per age, with a key per simulation name
     const ageMap = new Map<number, Record<string, number>>()
     for (const r of results) {
       for (const s of r.snapshots) {
@@ -98,18 +93,13 @@ export default function CompareChart({ simulations, mergeWithDefaults }: Props) 
       }
     }
     return [...ageMap.values()].sort((a, b) => a.age - b.age)
-  }, [simulations, validSelected, mergeWithDefaults])
+  }, [includedSims, mergeWithDefaults])
 
-  const selectedSims = simulations.filter((s) => validSelected.has(s.id))
-
-  const toggleSim = (id: string) => {
-    setSelected((prev) => {
+  const toggleExclude = (id: string) => {
+    setExcluded((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
       return next
     })
   }
@@ -125,55 +115,62 @@ export default function CompareChart({ simulations, mergeWithDefaults }: Props) 
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3">
-        {simulations.map((sim, i) => (
-          <label key={sim.id} className="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={validSelected.has(sim.id)}
-              onChange={() => toggleSim(sim.id)}
-              className="rounded"
-            />
-            <span
-              className="inline-block w-3 h-3 rounded-sm"
-              style={{ backgroundColor: COLORS[i % COLORS.length] }}
-            />
-            <span>{sim.name}</span>
-          </label>
-        ))}
+      <div>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Exclude from comparison</p>
+        <div className="flex flex-wrap gap-3">
+          {simulations.map((sim, i) => (
+            <label key={sim.id} className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={excluded.has(sim.id)}
+                onChange={() => toggleExclude(sim.id)}
+                className="rounded"
+              />
+              <span
+                className="inline-block w-3 h-3 rounded-sm"
+                style={{ backgroundColor: COLORS[i % COLORS.length] }}
+              />
+              <span className={excluded.has(sim.id) ? 'line-through text-gray-400' : ''}>{sim.name}</span>
+            </label>
+          ))}
+        </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={chartData} margin={{ top: 4, right: 16, left: 16, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-          <XAxis
-            dataKey="age"
-            label={{ value: 'Age', position: 'insideBottom', offset: -2, fontSize: 12 }}
-            tick={{ fontSize: 11 }}
-          />
-          <YAxis
-            tickFormatter={fmtAxis}
-            width={64}
-            tick={{ fontSize: 11 }}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <Legend fontSize={12} wrapperStyle={{ paddingTop: 12 }} />
-          {selectedSims.map((sim, _i) => {
-            const globalIndex = simulations.findIndex((s) => s.id === sim.id)
-            return (
-              <Line
-                key={sim.id}
-                type="monotone"
-                dataKey={sim.name}
-                stroke={COLORS[globalIndex % COLORS.length]}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-            )
-          })}
-        </LineChart>
-      </ResponsiveContainer>
+      {includedSims.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 text-sm">All simulations excluded</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={400}>
+          <LineChart data={chartData} margin={{ top: 4, right: 16, left: 16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              dataKey="age"
+              label={{ value: 'Age', position: 'insideBottom', offset: -2, fontSize: 12 }}
+              tick={{ fontSize: 11 }}
+            />
+            <YAxis
+              tickFormatter={fmtAxis}
+              width={64}
+              tick={{ fontSize: 11 }}
+            />
+            <Tooltip content={<CustomTooltip />} />
+            <Legend fontSize={12} wrapperStyle={{ paddingTop: 12 }} />
+            {includedSims.map((sim) => {
+              const globalIndex = simulations.findIndex((s) => s.id === sim.id)
+              return (
+                <Line
+                  key={sim.id}
+                  type="monotone"
+                  dataKey={sim.name}
+                  stroke={COLORS[globalIndex % COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              )
+            })}
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   )
 }
