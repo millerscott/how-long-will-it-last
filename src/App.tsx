@@ -1,12 +1,15 @@
+import { useCallback, useMemo } from 'react'
 import { useLocalStorage } from './hooks/useLocalStorage'
-import { DEFAULT_CONFIG, type AppConfig } from './types'
+import { DEFAULT_CONFIG, type AppConfig, type SimulationStore, type SavedSimulation } from './types'
 import { projectFinances, findDepletionAge } from './lib/projection'
 import HouseholdPanel from './components/HouseholdPanel'
 import ProjectionChart from './components/ProjectionChart'
 import ProjectionTable from './components/ProjectionTable'
 import ProjectionAssumptions from './components/ProjectionAssumptions'
+import SimulationSwitcher from './components/SimulationSwitcher'
+import CompareChart from './components/CompareChart'
 
-type Tab = 'household' | 'projection'
+type Tab = 'household' | 'projection' | 'compare'
 
 function StatBox({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: 'neutral' | 'good' | 'bad' }) {
   const valueClass =
@@ -24,13 +27,55 @@ function StatBox({ label, value, tone = 'neutral' }: { label: string; value: str
 const TAB_LABELS: Record<Tab, string> = {
   household: 'Household Setup',
   projection: 'Projection',
+  compare: 'Compare Simulations',
 }
 
-export default function App() {
-  const [rawConfig, setConfig] = useLocalStorage<AppConfig>('hlwil-config', DEFAULT_CONFIG)
-  // Merge with defaults so any fields added after initial save are always present.
-  // Deep-merge nested objects; ensure the cash account always exists.
-  const merged: AppConfig = {
+function makeId(): string {
+  return Math.random().toString(36).slice(2)
+}
+
+function createDefaultStore(): SimulationStore {
+  const id = makeId()
+  return {
+    activeId: id,
+    simulations: [{
+      id,
+      name: 'My Simulation',
+      config: DEFAULT_CONFIG,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }],
+  }
+}
+
+function migrateOrDefault(): SimulationStore {
+  const legacyRaw = localStorage.getItem('hlwil-config')
+  if (legacyRaw) {
+    try {
+      const legacyConfig = JSON.parse(legacyRaw) as AppConfig
+      const id = makeId()
+      const store: SimulationStore = {
+        activeId: id,
+        simulations: [{
+          id,
+          name: 'My Simulation',
+          config: legacyConfig,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }],
+      }
+      localStorage.removeItem('hlwil-config')
+      return store
+    } catch {
+      // Corrupted data, fall through to default
+    }
+  }
+  return createDefaultStore()
+}
+
+/** Apply DEFAULT_CONFIG deep-merge and migrations to a raw AppConfig */
+function mergeWithDefaults(rawConfig: AppConfig): AppConfig {
+  return {
     ...DEFAULT_CONFIG,
     ...rawConfig,
     assetRates: { ...DEFAULT_CONFIG.assetRates, ...rawConfig.assetRates },
@@ -61,10 +106,89 @@ export default function App() {
       ...e,
     })) as AppConfig['expenses'],
   }
-  const config: AppConfig = merged
+}
+
+export { mergeWithDefaults }
+
+export default function App() {
+  const [store, setStore] = useLocalStorage<SimulationStore>('hlwil-simulations', migrateOrDefault())
   const [tab, setTab] = useLocalStorage<Tab>('hlwil-tab', 'household')
 
-  const snapshots = projectFinances(config)
+  const activeSimulation = store.simulations.find((s) => s.id === store.activeId) ?? store.simulations[0]
+  const config = useMemo(() => mergeWithDefaults(activeSimulation.config), [activeSimulation.config])
+
+  const setConfig = useCallback((newConfig: AppConfig) => {
+    setStore((prev) => ({
+      ...prev,
+      simulations: prev.simulations.map((s) =>
+        s.id === prev.activeId
+          ? { ...s, config: newConfig, updatedAt: Date.now() }
+          : s
+      ),
+    }))
+  }, [setStore])
+
+  const createSimulation = useCallback((name: string, fromConfig?: AppConfig) => {
+    const id = makeId()
+    const now = Date.now()
+    const sim: SavedSimulation = {
+      id,
+      name,
+      config: fromConfig ?? DEFAULT_CONFIG,
+      createdAt: now,
+      updatedAt: now,
+    }
+    setStore((prev) => ({
+      activeId: id,
+      simulations: [...prev.simulations, sim],
+    }))
+  }, [setStore])
+
+  const loadSimulation = useCallback((id: string) => {
+    setStore((prev) => ({ ...prev, activeId: id }))
+  }, [setStore])
+
+  const deleteSimulation = useCallback((id: string) => {
+    setStore((prev) => {
+      if (prev.simulations.length <= 1) return prev
+      const remaining = prev.simulations.filter((s) => s.id !== id)
+      return {
+        activeId: prev.activeId === id ? remaining[0].id : prev.activeId,
+        simulations: remaining,
+      }
+    })
+  }, [setStore])
+
+  const renameSimulation = useCallback((id: string, name: string) => {
+    setStore((prev) => ({
+      ...prev,
+      simulations: prev.simulations.map((s) =>
+        s.id === id ? { ...s, name } : s
+      ),
+    }))
+  }, [setStore])
+
+  const duplicateSimulation = useCallback((id: string) => {
+    setStore((prev) => {
+      const source = prev.simulations.find((s) => s.id === id)
+      if (!source) return prev
+      const newId = makeId()
+      const now = Date.now()
+      const copy: SavedSimulation = {
+        id: newId,
+        name: `${source.name} (copy)`,
+        config: structuredClone(source.config),
+        createdAt: now,
+        updatedAt: now,
+      }
+      return {
+        activeId: newId,
+        simulations: [...prev.simulations, copy],
+      }
+    })
+  }, [setStore])
+
+  const snapshots = useMemo(() => projectFinances(config), [config])
   const depletionAge = findDepletionAge(snapshots)
 
   const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
@@ -79,6 +203,15 @@ export default function App() {
         <h1 className="text-2xl font-bold tracking-tight">How Long Will It Last?</h1>
         <p className="text-indigo-200 text-sm mt-0.5">Personal financial runway analysis</p>
       </header>
+
+      <SimulationSwitcher
+        store={store}
+        onLoad={loadSimulation}
+        onCreate={createSimulation}
+        onDelete={deleteSimulation}
+        onRename={renameSimulation}
+        onDuplicate={duplicateSimulation}
+      />
 
       {/* Summary stat boxes */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 px-6 py-4">
@@ -102,7 +235,7 @@ export default function App() {
 
       {/* Tabs */}
       <nav className="flex gap-1 px-6 pt-4">
-        {(['household', 'projection'] as Tab[]).map((t) => (
+        {(['household', 'projection', 'compare'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -128,6 +261,9 @@ export default function App() {
               <ProjectionTable snapshots={snapshots} />
             </div>
           </div>
+        )}
+        {tab === 'compare' && (
+          <CompareChart simulations={store.simulations} mergeWithDefaults={mergeWithDefaults} />
         )}
       </main>
     </div>

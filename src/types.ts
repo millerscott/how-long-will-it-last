@@ -134,6 +134,19 @@ export interface AppConfig {
   simulationMode: 'nominal' | 'real'
 }
 
+export interface SavedSimulation {
+  id: string
+  name: string
+  config: AppConfig
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SimulationStore {
+  activeId: string
+  simulations: SavedSimulation[]
+}
+
 export const DEFAULT_CONFIG: AppConfig = {
   household: [],
   inflationRate: 0.03,
