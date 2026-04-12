@@ -286,19 +286,23 @@ function getBaseHealthcareCost(
 
   const medicareStartAge = Math.max(employerEndAge, MEDICARE_AGE)
   let premium: number
+  let outOfPocket: number
   if (memberAge < employerEndAge) {
     // Employer phase — only 'own' members pay a premium; covered members pay $0
     premium = plan.employerCoverage === 'own' ? plan.employerPremium * 12 : 0
+    outOfPocket = plan.employerOutOfPocketAnnual
   } else if (memberAge < medicareStartAge) {
     // Pre-Medicare gap phase (only possible if employer coverage ended before 65)
     premium = plan.preMedicarePremium * 12
+    outOfPocket = plan.preMedicareOutOfPocketAnnual
   } else {
     // Medicare phase — employer coverage has ended and member is 65+
     // (IRMAA added separately by caller)
     premium = plan.medicareSupplementPremium * 12
+    outOfPocket = plan.medicareOutOfPocketAnnual
   }
 
-  return premium + plan.outOfPocketAnnual
+  return premium + outOfPocket
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {

@@ -498,92 +498,120 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
                     {plan.enabled && (
                       <div className="bg-gray-50 rounded p-3 space-y-3">
-                        {/* Employer coverage source */}
-                        <div className="grid grid-cols-12 gap-3 items-end">
-                          <div className="col-span-3">
-                            <label className="block text-xs text-gray-500 mb-1">Employer Coverage</label>
-                            <select
-                              className="input w-full text-xs"
-                              value={plan.employerCoverage}
-                              onChange={(e) => updateHealthcarePlan(member.id, { employerCoverage: e.target.value })}
-                            >
-                              <option value="own">Own employer</option>
-                              {otherMembers.map((m) => (
-                                <option key={m.id} value={m.id}>Covered by {m.name || 'other member'}</option>
-                              ))}
-                              <option value="none">None</option>
-                            </select>
+                        {/* Phase table */}
+                        <div className="space-y-2">
+                          {/* Column headers */}
+                          <div className="grid grid-cols-12 gap-2">
+                            <div className="col-span-3" />
+                            <span className="col-span-4 text-xs text-gray-400">Monthly Premium</span>
+                            <span className="col-span-4 text-xs text-gray-400">Out-of-Pocket (/yr)</span>
                           </div>
 
-                          {isOwnEmployer && (
-                            <>
-                              <div className="col-span-3">
-                                <label className="block text-xs text-gray-500 mb-1">Monthly Premium</label>
+                          {/* Employer phase */}
+                          <div className="grid grid-cols-12 gap-2 items-start">
+                            <div className="col-span-3 space-y-1">
+                              <span className="block text-xs font-medium text-gray-600">Employer Coverage</span>
+                              <select
+                                className="input w-full text-xs"
+                                value={plan.employerCoverage}
+                                onChange={(e) => updateHealthcarePlan(member.id, { employerCoverage: e.target.value })}
+                              >
+                                <option value="own">Own employer</option>
+                                {otherMembers.map((m) => (
+                                  <option key={m.id} value={m.id}>Covered by {m.name || 'other member'}</option>
+                                ))}
+                                <option value="none">None / self-pay from start</option>
+                              </select>
+                              {isOwnEmployer && (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-xs text-gray-400 shrink-0">Ends age</span>
+                                  <input
+                                    type="number"
+                                    className="input text-xs w-16"
+                                    placeholder={String(member.retirementAge)}
+                                    value={plan.employerCoverageEndAge ?? ''}
+                                    onChange={(e) => updateHealthcarePlan(member.id, {
+                                      employerCoverageEndAge: e.target.value === '' ? undefined : parseInt(e.target.value) || undefined,
+                                    })}
+                                  />
+                                </div>
+                              )}
+                              {isCoveredByOther && coveringMember && (
+                                <span className="block text-xs text-gray-400">
+                                  until {coveringMember.name || 'other member'} stops working (your age {employerEndAge})
+                                </span>
+                              )}
+                            </div>
+                            <div className="col-span-4">
+                              {plan.employerCoverage === 'none' ? (
+                                <span className="text-xs text-gray-400 italic">n/a</span>
+                              ) : isOwnEmployer ? (
                                 <CurrencyInput
                                   value={plan.employerPremium}
                                   onChange={(v) => updateHealthcarePlan(member.id, { employerPremium: v })}
                                 />
+                              ) : (
+                                <span className="text-xs text-gray-400 italic">$0 (covered)</span>
+                              )}
+                            </div>
+                            <div className="col-span-4">
+                              {plan.employerCoverage === 'none' ? (
+                                <span className="text-xs text-gray-400 italic">n/a</span>
+                              ) : (
+                                <CurrencyInput
+                                  value={plan.employerOutOfPocketAnnual}
+                                  onChange={(v) => updateHealthcarePlan(member.id, { employerOutOfPocketAnnual: v })}
+                                />
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Pre-Medicare gap phase */}
+                          {hasGapPhase && (
+                            <div className="grid grid-cols-12 gap-2 items-center">
+                              <div className="col-span-3">
+                                <span className="text-xs font-medium text-gray-600">Pre-Medicare</span>
+                                <span className="block text-xs text-gray-400">age {employerEndAge}–64</span>
                               </div>
-                              <div className="col-span-2">
-                                <label className="block text-xs text-gray-500 mb-1">Coverage Ends (Age)</label>
-                                <input
-                                  type="number"
-                                  className="input w-full"
-                                  placeholder={String(member.retirementAge)}
-                                  value={plan.employerCoverageEndAge ?? ''}
-                                  onChange={(e) => updateHealthcarePlan(member.id, {
-                                    employerCoverageEndAge: e.target.value === '' ? undefined : parseInt(e.target.value) || undefined,
-                                  })}
+                              <div className="col-span-4">
+                                <CurrencyInput
+                                  value={plan.preMedicarePremium}
+                                  onChange={(v) => updateHealthcarePlan(member.id, { preMedicarePremium: v })}
                                 />
                               </div>
-                            </>
-                          )}
-
-                          {isCoveredByOther && coveringMember && (
-                            <div className="col-span-4">
-                              <p className="text-xs text-gray-500">
-                                Covered until {coveringMember.name || 'other member'}'s plan ends
-                                (age {employerEndAge} for {member.name || 'this member'})
-                              </p>
+                              <div className="col-span-4">
+                                <CurrencyInput
+                                  value={plan.preMedicareOutOfPocketAnnual}
+                                  onChange={(v) => updateHealthcarePlan(member.id, { preMedicareOutOfPocketAnnual: v })}
+                                />
+                              </div>
                             </div>
                           )}
-                        </div>
 
-                        {/* Pre-Medicare and Medicare premiums */}
-                        <div className="grid grid-cols-12 gap-3 items-end">
-                          {hasGapPhase && (
+                          {/* Medicare phase */}
+                          <div className="grid grid-cols-12 gap-2 items-center">
                             <div className="col-span-3">
-                              <label className="block text-xs text-gray-500 mb-1">
-                                Pre-Medicare Premium
-                                <span className="text-gray-400"> (age {employerEndAge}–64, /mo)</span>
-                              </label>
+                              <span className="text-xs font-medium text-gray-600">Medicare</span>
+                              <span className="block text-xs text-gray-400">age {Math.max(employerEndAge, 65)}+</span>
+                            </div>
+                            <div className="col-span-4">
                               <CurrencyInput
-                                value={plan.preMedicarePremium}
-                                onChange={(v) => updateHealthcarePlan(member.id, { preMedicarePremium: v })}
+                                value={plan.medicareSupplementPremium}
+                                onChange={(v) => updateHealthcarePlan(member.id, { medicareSupplementPremium: v })}
                               />
                             </div>
-                          )}
-                          <div className="col-span-3">
-                            <label className="block text-xs text-gray-500 mb-1">
-                              Medicare Supplement
-                              <span className="text-gray-400"> (65+, /mo)</span>
-                            </label>
-                            <CurrencyInput
-                              value={plan.medicareSupplementPremium}
-                              onChange={(v) => updateHealthcarePlan(member.id, { medicareSupplementPremium: v })}
-                            />
+                            <div className="col-span-4">
+                              <CurrencyInput
+                                value={plan.medicareOutOfPocketAnnual}
+                                onChange={(v) => updateHealthcarePlan(member.id, { medicareOutOfPocketAnnual: v })}
+                              />
+                            </div>
                           </div>
-                          <div className="col-span-3">
-                            <label className="block text-xs text-gray-500 mb-1">
-                              Out-of-Pocket
-                              <span className="text-gray-400"> (/yr)</span>
-                            </label>
-                            <CurrencyInput
-                              value={plan.outOfPocketAnnual}
-                              onChange={(v) => updateHealthcarePlan(member.id, { outOfPocketAnnual: v })}
-                            />
-                          </div>
-                          <div className="col-span-3">
+                        </div>
+
+                        {/* Healthcare inflation + IRMAA note */}
+                        <div className="flex items-center gap-4 pt-1">
+                          <div className="w-40">
                             <label className="block text-xs text-gray-500 mb-1">Healthcare Inflation</label>
                             <PercentField
                               label=""
@@ -591,11 +619,10 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                               onChange={(v) => updateHealthcarePlan(member.id, { healthcareInflationRate: v })}
                             />
                           </div>
+                          <p className="text-xs text-gray-400 flex-1">
+                            Medicare IRMAA surcharges are calculated automatically based on projected income.
+                          </p>
                         </div>
-
-                        <p className="text-xs text-gray-400">
-                          Medicare IRMAA surcharges are calculated automatically based on projected income.
-                        </p>
                       </div>
                     )}
                   </div>

@@ -6,12 +6,16 @@ export interface HealthcarePlan {
   employerPremium: number
   /** Age at which employer coverage ends (defaults to retirementAge; only used when employerCoverage === 'own') */
   employerCoverageEndAge?: number
+  /** Annual out-of-pocket costs during employer coverage phase (deductibles, copays, prescriptions) */
+  employerOutOfPocketAnnual: number
   /** Monthly premium for individual ACA/private coverage between employer coverage ending and age 65 */
   preMedicarePremium: number
+  /** Annual out-of-pocket costs during pre-Medicare gap phase */
+  preMedicareOutOfPocketAnnual: number
   /** Monthly premium for Medicare supplement (Part B + Part D + Medigap) at age 65+ */
   medicareSupplementPremium: number
-  /** Annual out-of-pocket costs (deductibles, copays, prescriptions) — applies to all phases */
-  outOfPocketAnnual: number
+  /** Annual out-of-pocket costs during Medicare phase (copays, uncovered services, etc.) */
+  medicareOutOfPocketAnnual: number
   /** Annual healthcare cost inflation rate (e.g. 0.055 for 5.5%) */
   healthcareInflationRate: number
 }
@@ -21,9 +25,11 @@ export const DEFAULT_HEALTHCARE_PLAN: HealthcarePlan = {
   employerCoverage: 'own',
   employerPremium: 500,
   employerCoverageEndAge: undefined,
+  employerOutOfPocketAnnual: 2000,
   preMedicarePremium: 800,
+  preMedicareOutOfPocketAnnual: 4000,
   medicareSupplementPremium: 400,
-  outOfPocketAnnual: 3000,
+  medicareOutOfPocketAnnual: 3000,
   healthcareInflationRate: 0.055,
 }
 

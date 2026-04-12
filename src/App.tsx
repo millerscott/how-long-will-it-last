@@ -112,6 +112,22 @@ function mergeWithDefaults(rawConfig: AppConfig): AppConfig {
     })(),
     // Ensure incomeType is set on all existing income sources (migration)
     incomeSources: (rawConfig.incomeSources ?? []).map((s) => ({ incomeType: 'wage' as const, ...s })),
+    // Migrate household members: split old single outOfPocketAnnual into three phase-specific fields
+    household: (rawConfig.household ?? []).map((m) => {
+      const plan = m.healthcarePlan as any
+      if (!plan) return m
+      const legacy = plan.outOfPocketAnnual
+      if (legacy === undefined) return m
+      return {
+        ...m,
+        healthcarePlan: {
+          ...plan,
+          employerOutOfPocketAnnual: plan.employerOutOfPocketAnnual ?? legacy,
+          preMedicareOutOfPocketAnnual: plan.preMedicareOutOfPocketAnnual ?? legacy,
+          medicareOutOfPocketAnnual: plan.medicareOutOfPocketAnnual ?? legacy,
+        },
+      }
+    }),
     marketCrashes: rawConfig.marketCrashes ?? [],
     rothConversionTargetBracket: rawConfig.rothConversionTargetBracket ?? null,
     simulationMode: rawConfig.simulationMode ?? 'real',
