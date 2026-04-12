@@ -205,6 +205,31 @@ export default function App() {
     })
   }, [setStore])
 
+  const importHousehold = useCallback((fromId: string) => {
+    setStore((prev) => {
+      const source = prev.simulations.find((s) => s.id === fromId)
+      if (!source) return prev
+      return {
+        ...prev,
+        simulations: prev.simulations.map((s) =>
+          s.id === prev.activeId
+            ? {
+                ...s,
+                config: {
+                  ...s.config,
+                  household: structuredClone(source.config.household),
+                  incomeSources: structuredClone(source.config.incomeSources),
+                  householdAssets: structuredClone(source.config.householdAssets),
+                  expenses: structuredClone(source.config.expenses),
+                },
+                updatedAt: Date.now(),
+              }
+            : s
+        ),
+      }
+    })
+  }, [setStore])
+
   const moveSimulation = useCallback((id: string, direction: 'up' | 'down') => {
     setStore((prev) => {
       const idx = prev.simulations.findIndex((s) => s.id === id)
@@ -262,6 +287,7 @@ export default function App() {
         onRename={renameSimulation}
         onDuplicate={duplicateSimulation}
         onMove={moveSimulation}
+        onImportHousehold={importHousehold}
       />
 
       {/* Summary stat boxes */}
