@@ -231,6 +231,52 @@ export function calculateRothConversionAmount(
 }
 
 // ---------------------------------------------------------------------------
+// IRMAA — Income-Related Monthly Adjustment Amount (2026 estimates)
+// Medicare Part B and Part D surcharges based on MAGI (2-year lookback).
+// Thresholds are inflation-adjusted annually by CMS.
+// ---------------------------------------------------------------------------
+
+interface IrmaaBracket {
+  magiUpTo: number
+  partBMonthly: number
+  partDMonthly: number
+}
+
+const IRMAA_BRACKETS: Record<FilingStatus, IrmaaBracket[]> = {
+  single: [
+    { magiUpTo: 106_000, partBMonthly: 0,   partDMonthly: 0 },
+    { magiUpTo: 133_000, partBMonthly: 74,  partDMonthly: 13 },
+    { magiUpTo: 167_000, partBMonthly: 185, partDMonthly: 34 },
+    { magiUpTo: 200_000, partBMonthly: 296, partDMonthly: 55 },
+    { magiUpTo: 500_000, partBMonthly: 407, partDMonthly: 76 },
+    { magiUpTo: Infinity, partBMonthly: 444, partDMonthly: 83 },
+  ],
+  marriedFilingJointly: [
+    { magiUpTo: 212_000, partBMonthly: 0,   partDMonthly: 0 },
+    { magiUpTo: 266_000, partBMonthly: 74,  partDMonthly: 13 },
+    { magiUpTo: 334_000, partBMonthly: 185, partDMonthly: 34 },
+    { magiUpTo: 400_000, partBMonthly: 296, partDMonthly: 55 },
+    { magiUpTo: 750_000, partBMonthly: 407, partDMonthly: 76 },
+    { magiUpTo: Infinity, partBMonthly: 444, partDMonthly: 83 },
+  ],
+}
+
+/**
+ * Returns the annual IRMAA surcharge for one person based on household MAGI.
+ * In reality CMS uses MAGI from 2 years prior; the caller handles the lookback.
+ */
+export function calculateIrmaa(magi: number, filingStatus: FilingStatus): number {
+  const brackets = IRMAA_BRACKETS[filingStatus]
+  for (const bracket of brackets) {
+    if (magi <= bracket.magiUpTo) {
+      return (bracket.partBMonthly + bracket.partDMonthly) * 12
+    }
+  }
+  const last = brackets[brackets.length - 1]
+  return (last.partBMonthly + last.partDMonthly) * 12
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point — add more states here as needed
 // ---------------------------------------------------------------------------
 

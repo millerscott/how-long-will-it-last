@@ -1,9 +1,39 @@
+export interface HealthcarePlan {
+  enabled: boolean
+  /** 'own' = this member's employer, a memberId = covered by that member's plan, 'none' = no employer coverage */
+  employerCoverage: 'own' | 'none' | string
+  /** Monthly premium the employee pays for employer coverage (only used when employerCoverage === 'own') */
+  employerPremium: number
+  /** Age at which employer coverage ends (defaults to retirementAge; only used when employerCoverage === 'own') */
+  employerCoverageEndAge?: number
+  /** Monthly premium for individual ACA/private coverage between employer coverage ending and age 65 */
+  preMedicarePremium: number
+  /** Monthly premium for Medicare supplement (Part B + Part D + Medigap) at age 65+ */
+  medicareSupplementPremium: number
+  /** Annual out-of-pocket costs (deductibles, copays, prescriptions) — applies to all phases */
+  outOfPocketAnnual: number
+  /** Annual healthcare cost inflation rate (e.g. 0.055 for 5.5%) */
+  healthcareInflationRate: number
+}
+
+export const DEFAULT_HEALTHCARE_PLAN: HealthcarePlan = {
+  enabled: false,
+  employerCoverage: 'own',
+  employerPremium: 500,
+  employerCoverageEndAge: undefined,
+  preMedicarePremium: 800,
+  medicareSupplementPremium: 400,
+  outOfPocketAnnual: 3000,
+  healthcareInflationRate: 0.055,
+}
+
 export interface HouseholdMember {
   id: string
   name: string
   ageAtSimulationStart: number
   retirementAge: number
   state: string
+  healthcarePlan?: HealthcarePlan
 }
 
 export type IncomeSourceType = 'wage' | 'socialSecurity' | 'other'

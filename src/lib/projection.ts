@@ -1,5 +1,5 @@
-import type { AppConfig, AssetType } from '../types'
-import { ASSET_TYPE_LABELS } from '../types'
+import type { AppConfig, AssetType, HouseholdMember, HealthcarePlan } from '../types'
+import { ASSET_TYPE_LABELS, DEFAULT_HEALTHCARE_PLAN } from '../types'
 import {
   calculateFederalTax,
   calculateStateTax,
@@ -9,6 +9,7 @@ import {
   calculateCapitalGainsTax,
   calculateNiit,
   calculateRothConversionAmount,
+  calculateIrmaa,
   type FilingStatus,
 } from './tax'
 
@@ -246,6 +247,58 @@ export function calculateRmd(
   return totalRmd
 }
 
+const MEDICARE_AGE = 65
+
+/**
+ * Resolves the age at which a member's employer healthcare coverage ends.
+ * If the member is covered by another member's plan, uses that member's end age.
+ */
+function resolveEmployerCoverageEndAge(
+  member: HouseholdMember,
+  household: HouseholdMember[],
+): number | null {
+  const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+  if (!plan.enabled) return null
+  if (plan.employerCoverage === 'none') return member.ageAtSimulationStart // no employer phase
+  if (plan.employerCoverage === 'own') {
+    return plan.employerCoverageEndAge ?? member.retirementAge
+  }
+  // Covered by another member's plan — find that member's end age
+  const provider = household.find((m) => m.id === plan.employerCoverage)
+  if (!provider) return member.ageAtSimulationStart
+  const providerPlan = provider.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+  const providerEndAge = providerPlan.employerCoverageEndAge ?? provider.retirementAge
+  // Convert provider's end age to this member's age
+  const ageDiff = member.ageAtSimulationStart - provider.ageAtSimulationStart
+  return providerEndAge + ageDiff
+}
+
+/**
+ * Calculates annual healthcare cost for a single member at a given age.
+ * Returns the cost in base-year dollars (before healthcare inflation).
+ */
+function getBaseHealthcareCost(
+  plan: HealthcarePlan,
+  memberAge: number,
+  employerEndAge: number,
+): number {
+  if (!plan.enabled) return 0
+
+  let premium: number
+  if (memberAge < employerEndAge) {
+    // Employer phase — only 'own' members pay a premium; covered members pay $0
+    premium = plan.employerCoverage === 'own' ? plan.employerPremium * 12 : 0
+  } else if (memberAge < MEDICARE_AGE) {
+    // Pre-Medicare gap phase
+    premium = plan.preMedicarePremium * 12
+  } else {
+    // Medicare phase (IRMAA added separately by caller)
+    premium = plan.medicareSupplementPremium * 12
+  }
+
+  return premium + plan.outOfPocketAnnual
+}
+
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
   const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes, rothConversionTargetBracket } = config
 
@@ -262,6 +315,16 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
   const filingStatus: FilingStatus = household.length >= 2 ? 'marriedFilingJointly' : 'single'
   const currentYear = new Date().getFullYear()
   const snapshots: YearlySnapshot[] = []
+
+  // Pre-compute healthcare employer coverage end ages per member
+  const employerEndAges = new Map<string, number>()
+  for (const member of household) {
+    const endAge = resolveEmployerCoverageEndAge(member, household)
+    if (endAge !== null) employerEndAges.set(member.id, endAge)
+  }
+
+  // MAGI history for IRMAA 2-year lookback (stores per simulation year)
+  const magiHistory: number[] = []
 
   // Track each account balance independently
   const accountBalances = new Map<string, number>(
@@ -397,6 +460,42 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       }
     }
 
+    // --- Healthcare expenses (per member, phase-based with healthcare-specific inflation + IRMAA) ---
+    let healthcareExpenseTotal = 0
+    for (const member of household) {
+      const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+      if (!plan.enabled) continue
+      const memberAge = member.ageAtSimulationStart + yearsElapsed
+      const employerEndAge = employerEndAges.get(member.id) ?? memberAge
+      const baseCost = getBaseHealthcareCost(plan, memberAge, employerEndAge)
+      if (baseCost <= 0 && memberAge < MEDICARE_AGE) continue
+
+      // Healthcare inflation: grows at its own rate, not general inflation
+      const hcInflationRate = toEffectiveRate(plan.healthcareInflationRate)
+      const inflatedCost = baseCost * Math.pow(1 + hcInflationRate, yearsElapsed)
+
+      // IRMAA surcharge for Medicare-age members (uses MAGI from 2 years prior)
+      let irmaaSurcharge = 0
+      if (memberAge >= MEDICARE_AGE) {
+        const lookbackMagi = magiHistory.length >= 2
+          ? magiHistory[magiHistory.length - 2]
+          : magiHistory.length === 1
+            ? magiHistory[0]
+            : 0
+        irmaaSurcharge = calculateIrmaa(lookbackMagi, filingStatus)
+        // IRMAA is already in nominal terms from the bracket; in real mode, deflate it
+        if (realMode && yearsElapsed > 0) {
+          irmaaSurcharge = irmaaSurcharge / Math.pow(1 + inflationRate, yearsElapsed)
+        }
+      }
+
+      const memberHealthcareCost = inflatedCost + irmaaSurcharge
+      healthcareExpenseTotal += memberHealthcareCost
+      const label = household.length > 1 ? `Healthcare (${member.name || 'Member'})` : 'Healthcare'
+      expenseBreakdown.push({ label, amount: memberHealthcareCost })
+    }
+    regularExpenseTotal += healthcareExpenseTotal
+
     const expenseTotal = regularExpenseTotal + educationExpenseTotal
 
     // Net cash flow (income after all taxes and expenses) flows into the cash account
@@ -492,6 +591,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     // Traditional IRA distributions (RMD + waterfall) increase MAGI but are not NII themselves.
     // MAGI uses the original taxableSs here; it will be corrected in the traditionalIraFederalTax step below.
     const magi = baseOrdinaryIncome + brokerageWithdrawn + totalTraditionalWithdrawn
+    magiHistory.push(magi)
     const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
     const stateCapitalGainsTax = brokerageWithdrawn > 0
       ? calculateStateTax(wageIncome + interestIncome + brokerageWithdrawn, primaryState, filingStatus)

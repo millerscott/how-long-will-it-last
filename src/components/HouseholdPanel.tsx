@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, RegularExpense, EducationExpense, PeriodicExpense, ExpenseType, Frequency } from '../types'
-import { ASSET_TYPE_LABELS, ADDABLE_ASSET_TYPES } from '../types'
+import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, RegularExpense, EducationExpense, PeriodicExpense, ExpenseType, Frequency, HealthcarePlan } from '../types'
+import { ASSET_TYPE_LABELS, ADDABLE_ASSET_TYPES, DEFAULT_HEALTHCARE_PLAN } from '../types'
+import PercentField from './PercentField'
 import { US_STATES } from '../lib/states'
 import CurrencyInput from './CurrencyInput'
 import { useLocalStorage } from '../hooks/useLocalStorage'
@@ -121,6 +122,13 @@ export default function HouseholdPanel({ config, onChange }: Props) {
   function removeContribution(assetId: string, periodId: string) {
     const asset = config.householdAssets.find((a) => a.id === assetId)!
     updateAsset(assetId, { contributions: asset.contributions.filter((c) => c.id !== periodId) })
+  }
+
+  // --- Healthcare ---
+  function updateHealthcarePlan(memberId: string, partial: Partial<HealthcarePlan>) {
+    const member = config.household.find((m) => m.id === memberId)!
+    const plan = member.healthcarePlan ?? { ...DEFAULT_HEALTHCARE_PLAN }
+    updateMember(memberId, { healthcarePlan: { ...plan, ...partial } })
   }
 
   // --- Expenses ---
@@ -416,6 +424,142 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   </p>
                 )}
               </div>
+
+              {/* Healthcare plan for this member */}
+              {(() => {
+                const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+                const otherMembers = config.household.filter((m) => m.id !== member.id)
+                const isOwnEmployer = plan.employerCoverage === 'own'
+                const isCoveredByOther = plan.employerCoverage !== 'own' && plan.employerCoverage !== 'none'
+                const coveringMember = isCoveredByOther ? config.household.find((m) => m.id === plan.employerCoverage) : null
+                const employerEndAge = isOwnEmployer
+                  ? (plan.employerCoverageEndAge ?? member.retirementAge)
+                  : isCoveredByOther && coveringMember
+                    ? (coveringMember.healthcarePlan?.employerCoverageEndAge ?? coveringMember.retirementAge) + (member.ageAtSimulationStart - coveringMember.ageAtSimulationStart)
+                    : member.ageAtSimulationStart
+                const hasGapPhase = employerEndAge < 65
+                return (
+                  <div className="px-4 pb-4 space-y-2 border-t border-gray-100 pt-3">
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={plan.enabled}
+                          onChange={(e) => updateHealthcarePlan(member.id, { enabled: e.target.checked })}
+                          className="rounded"
+                        />
+                        Healthcare Costs
+                      </label>
+                      {!plan.enabled && (
+                        <span className="text-xs text-gray-400">Enable to model healthcare expenses for this member</span>
+                      )}
+                    </div>
+
+                    {plan.enabled && (
+                      <div className="bg-gray-50 rounded p-3 space-y-3">
+                        {/* Employer coverage source */}
+                        <div className="grid grid-cols-12 gap-3 items-end">
+                          <div className="col-span-3">
+                            <label className="block text-xs text-gray-500 mb-1">Employer Coverage</label>
+                            <select
+                              className="input w-full text-xs"
+                              value={plan.employerCoverage}
+                              onChange={(e) => updateHealthcarePlan(member.id, { employerCoverage: e.target.value })}
+                            >
+                              <option value="own">Own employer</option>
+                              {otherMembers.map((m) => (
+                                <option key={m.id} value={m.id}>Covered by {m.name || 'other member'}</option>
+                              ))}
+                              <option value="none">None</option>
+                            </select>
+                          </div>
+
+                          {isOwnEmployer && (
+                            <>
+                              <div className="col-span-3">
+                                <label className="block text-xs text-gray-500 mb-1">Monthly Premium</label>
+                                <CurrencyInput
+                                  value={plan.employerPremium}
+                                  onChange={(v) => updateHealthcarePlan(member.id, { employerPremium: v })}
+                                />
+                              </div>
+                              <div className="col-span-2">
+                                <label className="block text-xs text-gray-500 mb-1">Coverage Ends (Age)</label>
+                                <input
+                                  type="number"
+                                  className="input w-full"
+                                  placeholder={String(member.retirementAge)}
+                                  value={plan.employerCoverageEndAge ?? ''}
+                                  onChange={(e) => updateHealthcarePlan(member.id, {
+                                    employerCoverageEndAge: e.target.value === '' ? undefined : parseInt(e.target.value) || undefined,
+                                  })}
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {isCoveredByOther && coveringMember && (
+                            <div className="col-span-4">
+                              <p className="text-xs text-gray-500">
+                                Covered until {coveringMember.name || 'other member'}'s plan ends
+                                (age {employerEndAge} for {member.name || 'this member'})
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Pre-Medicare and Medicare premiums */}
+                        <div className="grid grid-cols-12 gap-3 items-end">
+                          {hasGapPhase && (
+                            <div className="col-span-3">
+                              <label className="block text-xs text-gray-500 mb-1">
+                                Pre-Medicare Premium
+                                <span className="text-gray-400"> (age {employerEndAge}–64, /mo)</span>
+                              </label>
+                              <CurrencyInput
+                                value={plan.preMedicarePremium}
+                                onChange={(v) => updateHealthcarePlan(member.id, { preMedicarePremium: v })}
+                              />
+                            </div>
+                          )}
+                          <div className="col-span-3">
+                            <label className="block text-xs text-gray-500 mb-1">
+                              Medicare Supplement
+                              <span className="text-gray-400"> (65+, /mo)</span>
+                            </label>
+                            <CurrencyInput
+                              value={plan.medicareSupplementPremium}
+                              onChange={(v) => updateHealthcarePlan(member.id, { medicareSupplementPremium: v })}
+                            />
+                          </div>
+                          <div className="col-span-3">
+                            <label className="block text-xs text-gray-500 mb-1">
+                              Out-of-Pocket
+                              <span className="text-gray-400"> (/yr)</span>
+                            </label>
+                            <CurrencyInput
+                              value={plan.outOfPocketAnnual}
+                              onChange={(v) => updateHealthcarePlan(member.id, { outOfPocketAnnual: v })}
+                            />
+                          </div>
+                          <div className="col-span-3">
+                            <label className="block text-xs text-gray-500 mb-1">Healthcare Inflation</label>
+                            <PercentField
+                              label=""
+                              value={plan.healthcareInflationRate}
+                              onChange={(v) => updateHealthcarePlan(member.id, { healthcareInflationRate: v })}
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-gray-400">
+                          Medicare IRMAA surcharges are calculated automatically based on projected income.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           )
         })}
