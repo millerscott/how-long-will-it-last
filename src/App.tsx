@@ -129,6 +129,7 @@ function mergeWithDefaults(rawConfig: AppConfig): AppConfig {
       }
     }),
     marketCrashes: rawConfig.marketCrashes ?? [],
+    healthcareInflationRate: rawConfig.healthcareInflationRate ?? 0.055,
     rothConversionTargetBracket: rawConfig.rothConversionTargetBracket ?? null,
     simulationMode: rawConfig.simulationMode ?? 'real',
     // Ensure expenseType and frequency are set on all existing expenses (migration)

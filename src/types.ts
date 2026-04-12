@@ -16,8 +16,6 @@ export interface HealthcarePlan {
   medicareSupplementPremium: number
   /** Annual out-of-pocket costs during Medicare phase (copays, uncovered services, etc.) */
   medicareOutOfPocketAnnual: number
-  /** Annual healthcare cost inflation rate (e.g. 0.055 for 5.5%) */
-  healthcareInflationRate: number
 }
 
 export const DEFAULT_HEALTHCARE_PLAN: HealthcarePlan = {
@@ -30,7 +28,6 @@ export const DEFAULT_HEALTHCARE_PLAN: HealthcarePlan = {
   preMedicareOutOfPocketAnnual: 4000,
   medicareSupplementPremium: 400,
   medicareOutOfPocketAnnual: 3000,
-  healthcareInflationRate: 0.055,
 }
 
 export interface HouseholdMember {
@@ -157,6 +154,7 @@ export interface MarketCrash {
 export interface AppConfig {
   household: HouseholdMember[]
   inflationRate: number
+  healthcareInflationRate: number
   ssCola: number
   simulationYears: number
   incomeSources: IncomeSource[]
@@ -186,6 +184,7 @@ export interface SimulationStore {
 export const DEFAULT_CONFIG: AppConfig = {
   household: [],
   inflationRate: 0.03,
+  healthcareInflationRate: 0.055,
   ssCola: 0.025,
   simulationYears: 60,
   incomeSources: [],

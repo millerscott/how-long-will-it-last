@@ -65,6 +65,7 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
   summaryParts.push(`${config.marketCrashes.length} crash scenario${config.marketCrashes.length !== 1 ? 's' : ''}`)
   // Rates
   summaryParts.push(`Inflation ${fmtPct(config.inflationRate)}`)
+  summaryParts.push(`Healthcare ${fmtPct(config.healthcareInflationRate)}`)
   summaryParts.push(`SS COLA ${fmtPct(config.ssCola)}`)
   summaryParts.push(...(Object.keys(config.assetRates) as (keyof AssetRates)[]).map(
     (k) => `${ASSET_SHORT_LABELS[k]} ${fmtPct(config.assetRates[k])}`
@@ -223,37 +224,61 @@ export default function ProjectionAssumptions({ config, onChange }: Props) {
           <div>
             <h3 className="text-sm font-semibold text-gray-600 mb-1">Rates</h3>
             <p className="text-xs text-gray-400 mb-3">Annual rates assumed for inflation, Social Security, and appreciation for each account type.</p>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
-              <PercentField
-                label="Inflation Rate"
-                value={config.inflationRate}
-                onChange={(v) => update({ inflationRate: v })}
-              />
-              <PercentField
-                label="Social Security COLA"
-                value={config.ssCola}
-                onChange={(v) => update({ ssCola: v })}
-              />
-              {(Object.keys(config.assetRates) as (keyof AssetRates)[]).map((type) => (
-                <div key={type}>
-                  <PercentField
-                    label={ASSET_TYPE_LABELS[type]}
-                    value={config.assetRates[type]}
-                    onChange={(v) => updateRates({ [type]: v })}
-                  />
-                  {type === 'taxableBrokerage' && (
-                    <button
-                      onClick={() => {
-                        const rate = config.assetRates.taxableBrokerage
-                        updateRates({ retirementTraditional: rate, retirementRoth: rate, educationSavings529: rate })
-                      }}
-                      className="text-[10px] text-indigo-500 hover:text-indigo-700 mt-0.5 cursor-pointer"
-                    >
-                      Sync rate to all equity accounts
-                    </button>
-                  )}
-                </div>
-              ))}
+            <div className="space-y-3">
+              {/* Row 1: General inflation rates */}
+              <div className="grid grid-cols-3 gap-4">
+                <PercentField
+                  label="Inflation Rate"
+                  value={config.inflationRate}
+                  onChange={(v) => update({ inflationRate: v })}
+                />
+                <PercentField
+                  label="Healthcare Inflation"
+                  value={config.healthcareInflationRate}
+                  onChange={(v) => update({ healthcareInflationRate: v })}
+                />
+                <PercentField
+                  label="Social Security COLA"
+                  value={config.ssCola}
+                  onChange={(v) => update({ ssCola: v })}
+                />
+              </div>
+              {/* Row 2: Cash-like returns */}
+              <div className="grid grid-cols-3 gap-4">
+                <PercentField
+                  label={ASSET_TYPE_LABELS.cash}
+                  value={config.assetRates.cash}
+                  onChange={(v) => updateRates({ cash: v })}
+                />
+                <PercentField
+                  label={ASSET_TYPE_LABELS.moneyMarketSavings}
+                  value={config.assetRates.moneyMarketSavings}
+                  onChange={(v) => updateRates({ moneyMarketSavings: v })}
+                />
+              </div>
+              {/* Row 3: Equity returns */}
+              <div className="grid grid-cols-4 gap-4">
+                {(['taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529'] as const).map((type) => (
+                  <div key={type}>
+                    <PercentField
+                      label={ASSET_TYPE_LABELS[type]}
+                      value={config.assetRates[type]}
+                      onChange={(v) => updateRates({ [type]: v })}
+                    />
+                    {type === 'taxableBrokerage' && (
+                      <button
+                        onClick={() => {
+                          const rate = config.assetRates.taxableBrokerage
+                          updateRates({ retirementTraditional: rate, retirementRoth: rate, educationSavings529: rate })
+                        }}
+                        className="text-[10px] text-indigo-500 hover:text-indigo-700 mt-0.5 cursor-pointer"
+                      >
+                        Sync to all equity
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

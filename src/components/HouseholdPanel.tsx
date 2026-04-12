@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, RegularExpense, EducationExpense, PeriodicExpense, ExpenseType, Frequency, HealthcarePlan } from '../types'
 import { ASSET_TYPE_LABELS, ADDABLE_ASSET_TYPES, DEFAULT_HEALTHCARE_PLAN } from '../types'
-import PercentField from './PercentField'
 import { US_STATES } from '../lib/states'
 import CurrencyInput from './CurrencyInput'
 import { useLocalStorage } from '../hooks/useLocalStorage'
@@ -498,6 +497,43 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
                     {plan.enabled && (
                       <div className="bg-gray-50 rounded p-3 space-y-3">
+                        {/* Coverage source selector (above the phase table) */}
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-medium text-gray-600 whitespace-nowrap">Employer coverage</label>
+                            <select
+                              className="input text-xs"
+                              value={plan.employerCoverage}
+                              onChange={(e) => updateHealthcarePlan(member.id, { employerCoverage: e.target.value })}
+                            >
+                              <option value="own">Own employer</option>
+                              {otherMembers.map((m) => (
+                                <option key={m.id} value={m.id}>Covered by {m.name || 'other member'}</option>
+                              ))}
+                              <option value="none">None / self-pay from start</option>
+                            </select>
+                          </div>
+                          {isOwnEmployer && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs text-gray-400 whitespace-nowrap">Ends age</span>
+                              <input
+                                type="number"
+                                className="input text-xs w-16"
+                                placeholder={String(member.retirementAge)}
+                                value={plan.employerCoverageEndAge ?? ''}
+                                onChange={(e) => updateHealthcarePlan(member.id, {
+                                  employerCoverageEndAge: e.target.value === '' ? undefined : parseInt(e.target.value) || undefined,
+                                })}
+                              />
+                            </div>
+                          )}
+                          {isCoveredByOther && coveringMember && (
+                            <span className="text-xs text-gray-400">
+                              until {coveringMember.name || 'other member'} stops working (your age {employerEndAge})
+                            </span>
+                          )}
+                        </div>
+
                         {/* Phase table */}
                         <div className="space-y-2">
                           {/* Column headers */}
@@ -508,38 +544,11 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                           </div>
 
                           {/* Employer phase */}
-                          <div className="grid grid-cols-12 gap-2 items-start">
-                            <div className="col-span-3 space-y-1">
-                              <span className="block text-xs font-medium text-gray-600">Employer Coverage</span>
-                              <select
-                                className="input w-full text-xs"
-                                value={plan.employerCoverage}
-                                onChange={(e) => updateHealthcarePlan(member.id, { employerCoverage: e.target.value })}
-                              >
-                                <option value="own">Own employer</option>
-                                {otherMembers.map((m) => (
-                                  <option key={m.id} value={m.id}>Covered by {m.name || 'other member'}</option>
-                                ))}
-                                <option value="none">None / self-pay from start</option>
-                              </select>
-                              {isOwnEmployer && (
-                                <div className="flex items-center gap-1">
-                                  <span className="text-xs text-gray-400 shrink-0">Ends age</span>
-                                  <input
-                                    type="number"
-                                    className="input text-xs w-16"
-                                    placeholder={String(member.retirementAge)}
-                                    value={plan.employerCoverageEndAge ?? ''}
-                                    onChange={(e) => updateHealthcarePlan(member.id, {
-                                      employerCoverageEndAge: e.target.value === '' ? undefined : parseInt(e.target.value) || undefined,
-                                    })}
-                                  />
-                                </div>
-                              )}
-                              {isCoveredByOther && coveringMember && (
-                                <span className="block text-xs text-gray-400">
-                                  until {coveringMember.name || 'other member'} stops working (your age {employerEndAge})
-                                </span>
+                          <div className="grid grid-cols-12 gap-2 items-center">
+                            <div className="col-span-3">
+                              <span className="text-xs font-medium text-gray-600">Employer</span>
+                              {plan.employerCoverage !== 'none' && (
+                                <span className="block text-xs text-gray-400">until age {employerEndAge}</span>
                               )}
                             </div>
                             <div className="col-span-4">
@@ -609,20 +618,10 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                           </div>
                         </div>
 
-                        {/* Healthcare inflation + IRMAA note */}
-                        <div className="flex items-center gap-4 pt-1">
-                          <div className="w-40">
-                            <label className="block text-xs text-gray-500 mb-1">Healthcare Inflation</label>
-                            <PercentField
-                              label=""
-                              value={plan.healthcareInflationRate}
-                              onChange={(v) => updateHealthcarePlan(member.id, { healthcareInflationRate: v })}
-                            />
-                          </div>
-                          <p className="text-xs text-gray-400 flex-1">
-                            Medicare IRMAA surcharges are calculated automatically based on projected income.
-                          </p>
-                        </div>
+                        {/* IRMAA note */}
+                        <p className="text-xs text-gray-400 pt-1">
+                          Medicare IRMAA surcharges are calculated automatically based on projected income.
+                        </p>
                       </div>
                     )}
                   </div>

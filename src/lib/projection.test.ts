@@ -32,6 +32,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     household: [member()],
     inflationRate: 0,
+    healthcareInflationRate: 0.055,
     ssCola: 0,
     simulationYears: 10,
     incomeSources: [],

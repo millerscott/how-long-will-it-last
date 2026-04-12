@@ -306,7 +306,7 @@ function getBaseHealthcareCost(
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
-  const { inflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes, rothConversionTargetBracket } = config
+  const { inflationRate, healthcareInflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes, rothConversionTargetBracket } = config
 
   const primaryMember = household[0]
   if (!primaryMember) return []
@@ -477,7 +477,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       if (baseCost <= 0 && memberAge < MEDICARE_AGE) continue
 
       // Healthcare inflation: grows at its own rate, not general inflation
-      const hcInflationRate = toEffectiveRate(plan.healthcareInflationRate)
+      const hcInflationRate = toEffectiveRate(healthcareInflationRate)
       const inflatedCost = baseCost * Math.pow(1 + hcInflationRate, yearsElapsed)
 
       // IRMAA surcharge — only once on Medicare (65+ and employer coverage has ended)
