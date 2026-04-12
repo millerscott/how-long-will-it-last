@@ -125,8 +125,8 @@ export function calculateAdditionalMedicare(
 // ---------------------------------------------------------------------------
 
 const LTCG_THRESHOLDS: Record<FilingStatus, { zero: number; fifteen: number }> = {
-  single:               { zero: 47_700,  fifteen: 524_600 },
-  marriedFilingJointly: { zero: 95_400,  fifteen: 589_200 },
+  single:               { zero: 49_450,  fifteen: 545_500 },
+  marriedFilingJointly: { zero: 98_900,  fifteen: 613_700 },
 }
 
 export function calculateCapitalGainsTax(
@@ -244,20 +244,20 @@ interface IrmaaBracket {
 
 const IRMAA_BRACKETS: Record<FilingStatus, IrmaaBracket[]> = {
   single: [
-    { magiUpTo: 106_000, partBMonthly: 0,   partDMonthly: 0 },
-    { magiUpTo: 133_000, partBMonthly: 74,  partDMonthly: 13 },
-    { magiUpTo: 167_000, partBMonthly: 185, partDMonthly: 34 },
-    { magiUpTo: 200_000, partBMonthly: 296, partDMonthly: 55 },
-    { magiUpTo: 500_000, partBMonthly: 407, partDMonthly: 76 },
-    { magiUpTo: Infinity, partBMonthly: 444, partDMonthly: 83 },
+    { magiUpTo: 109_000, partBMonthly: 0,      partDMonthly: 0 },
+    { magiUpTo: 137_000, partBMonthly: 81.20,  partDMonthly: 14.50 },
+    { magiUpTo: 171_000, partBMonthly: 202.90, partDMonthly: 37.50 },
+    { magiUpTo: 205_000, partBMonthly: 324.60, partDMonthly: 60.40 },
+    { magiUpTo: 500_000, partBMonthly: 446.30, partDMonthly: 83.30 },
+    { magiUpTo: Infinity, partBMonthly: 487.00, partDMonthly: 91.00 },
   ],
   marriedFilingJointly: [
-    { magiUpTo: 212_000, partBMonthly: 0,   partDMonthly: 0 },
-    { magiUpTo: 266_000, partBMonthly: 74,  partDMonthly: 13 },
-    { magiUpTo: 334_000, partBMonthly: 185, partDMonthly: 34 },
-    { magiUpTo: 400_000, partBMonthly: 296, partDMonthly: 55 },
-    { magiUpTo: 750_000, partBMonthly: 407, partDMonthly: 76 },
-    { magiUpTo: Infinity, partBMonthly: 444, partDMonthly: 83 },
+    { magiUpTo: 218_000, partBMonthly: 0,      partDMonthly: 0 },
+    { magiUpTo: 274_000, partBMonthly: 81.20,  partDMonthly: 14.50 },
+    { magiUpTo: 342_000, partBMonthly: 202.90, partDMonthly: 37.50 },
+    { magiUpTo: 410_000, partBMonthly: 324.60, partDMonthly: 60.40 },
+    { magiUpTo: 750_000, partBMonthly: 446.30, partDMonthly: 83.30 },
+    { magiUpTo: Infinity, partBMonthly: 487.00, partDMonthly: 91.00 },
   ],
 }
 

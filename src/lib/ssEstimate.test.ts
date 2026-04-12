@@ -13,7 +13,7 @@ function expectDollars(actual: number, expected: number) {
 // ---------------------------------------------------------------------------
 // Reference values computed from the 2026 PIA formula:
 //   AIME = annualSalary / 12
-//   PIA  = 90% of first $1,226 + 32% of $1,226–$7,391 + 15% above $7,391
+//   PIA  = 90% of first $1,286 + 32% of $1,286–$7,749 + 15% above $7,749
 //   FRA  = 67
 //   Early reduction: −6.67%/yr for first 3 yrs, −5%/yr beyond
 //   Late credit:     +8%/yr up to age 70 (max +24%)
@@ -30,47 +30,48 @@ describe('estimateSsBenefit', () => {
   })
 
   describe('PIA calculation (claim at FRA = 67)', () => {
-    it('first bend point only — salary $14,712/yr (AIME = $1,226/mo)', () => {
-      // PIA = 1,226 × 0.90 = 1,103.40 → annual = round(1,103.40 × 12) = 13,241
-      expectDollars(estimateSsBenefit(14_712, 67), 13_241)
+    it('first bend point only — salary $15,432/yr (AIME = $1,286/mo)', () => {
+      // PIA = 1,286 × 0.90 = 1,157.40 → annual = round(1,157.40 × 12) = 13,889
+      expectDollars(estimateSsBenefit(15_432, 67), 13_889)
     })
 
     it('spans first and second bend points — salary $60,000/yr (AIME = $5,000/mo)', () => {
-      // PIA = 1,226×0.90 + (5,000−1,226)×0.32 = 1,103.40 + 1,207.68 = 2,311.08
-      // Annual = round(2,311.08 × 12) = 27,733
-      expectDollars(estimateSsBenefit(60_000, 67), 27_733)
+      // PIA = 1,286×0.90 + (5,000−1,286)×0.32 = 1,157.40 + 1,188.48 = 2,345.88
+      // Annual = round(2,345.88 × 12) = 28,151
+      expectDollars(estimateSsBenefit(60_000, 67), 28_151)
     })
 
     it('spans all three bend points — salary $120,000/yr (AIME = $10,000/mo)', () => {
-      // PIA = 1,226×0.90 + 6,165×0.32 + 2,609×0.15 = 1,103.40 + 1,972.80 + 391.35 = 3,467.55
-      // Annual = round(3,467.55 × 12) = 41,611
-      expectDollars(estimateSsBenefit(120_000, 67), 41_611)
+      // PIA = 1,286×0.90 + (7,749−1,286)×0.32 + (10,000−7,749)×0.15
+      //     = 1,157.40 + 2,068.16 + 337.65 = 3,563.21
+      // Annual = round(3,563.21 × 12) = 42,759
+      expectDollars(estimateSsBenefit(120_000, 67), 42_759)
     })
   })
 
   describe('early claiming reductions (salary $60,000)', () => {
     it('claims at 62 — maximum early reduction (30%)', () => {
       // 3 yrs × 6.67% + 2 yrs × 5% = 20% + 10% = 30% reduction
-      // Monthly = 2,311.08 × 0.70 = 1,617.756 → annual = round(19,413.07) = 19,413
-      expectDollars(estimateSsBenefit(60_000, 62), 19_413)
+      // Monthly = 2,345.88 × 0.70 = 1,642.116 → annual = round(19,705.39) = 19,705
+      expectDollars(estimateSsBenefit(60_000, 62), 19_705)
     })
 
     it('claims at 65 — 2 years early (13.33% reduction)', () => {
       // 2 yrs × 6.67% = 13.33% reduction → adjustment = 13/15
-      // Monthly = 2,311.08 × 13/15 = 2,002.936 → annual = round(24,035.23) = 24,035
-      expectDollars(estimateSsBenefit(60_000, 65), 24_035)
+      // Monthly = 2,345.88 × 13/15 = 2,033.096 → annual = round(24,397.15) = 24,397
+      expectDollars(estimateSsBenefit(60_000, 65), 24_397)
     })
   })
 
   describe('delayed claiming credits (salary $60,000)', () => {
     it('claims at 68 — 1 year late (+8%)', () => {
-      // Monthly = 2,311.08 × 1.08 = 2,495.966 → annual = round(29,951.60) = 29,952
-      expectDollars(estimateSsBenefit(60_000, 68), 29_952)
+      // Monthly = 2,345.88 × 1.08 = 2,533.5504 → annual = round(30,402.60) = 30,403
+      expectDollars(estimateSsBenefit(60_000, 68), 30_403)
     })
 
     it('claims at 70 — maximum delay (+24%)', () => {
-      // Monthly = 2,311.08 × 1.24 = 2,865.739 → annual = round(34,388.87) = 34,389
-      expectDollars(estimateSsBenefit(60_000, 70), 34_389)
+      // Monthly = 2,345.88 × 1.24 = 2,908.8912 → annual = round(34,906.69) = 34,907
+      expectDollars(estimateSsBenefit(60_000, 70), 34_907)
     })
   })
 

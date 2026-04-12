@@ -348,27 +348,28 @@ describe('calculateCapitalGainsTax', () => {
 
   it('gains fully in the 0% bracket — low ordinary income', () => {
     // ordinaryTaxable = 0 (income ≤ standard deduction $16,100)
-    // All $10,000 gains fall below $47,700 → 0% tax
+    // All $10,000 gains fall below $49,450 → 0% tax
     expectDollars(calculateCapitalGainsTax(10_000, 10_000, 'single'), 0)
   })
 
   it('gains straddling 0% and 15% brackets', () => {
     // ordinaryTaxable = 30,000 - 16,100 = 13,900
-    // 0% room = 47,700 - 13,900 = 33,800 → first 33,800 at 0%
-    // remaining 6,200 at 15% = $930
-    expectDollars(calculateCapitalGainsTax(40_000, 30_000, 'single'), 930)
+    // 0% room = 49,450 - 13,900 = 35,550 → first 35,550 at 0%
+    // remaining 4,450 at 15% = $667.50
+    expectDollars(calculateCapitalGainsTax(40_000, 30_000, 'single'), 667.50)
   })
 
   it('gains fully in the 15% bracket', () => {
-    // ordinaryTaxable = 100,000 - 16,100 = 83,900 (above $47,700)
+    // ordinaryTaxable = 100,000 - 16,100 = 83,900 (above $49,450)
     // All gains stack above the 0% threshold → all $50,000 at 15% = $7,500
     expectDollars(calculateCapitalGainsTax(50_000, 100_000, 'single'), 7_500)
   })
 
   it('gains straddling 15% and 20% brackets (high income)', () => {
-    // ordinaryTaxable = 550,000 - 16,100 = 533,900 (above $524,600)
-    // All gains stack above both thresholds → all $100,000 at 20% = $20,000
-    expectDollars(calculateCapitalGainsTax(100_000, 550_000, 'single'), 20_000)
+    // ordinaryTaxable = 560,000 - 16,100 = 543,900 (below $545,500)
+    // 15% room = 545,500 - 543,900 = 1,600 → first 1,600 at 15% = $240
+    // remaining 98,400 at 20% = $19,680
+    expectDollars(calculateCapitalGainsTax(100_000, 560_000, 'single'), 19_920)
   })
 
   it('MFJ 0% threshold is higher than single', () => {
@@ -380,9 +381,9 @@ describe('calculateCapitalGainsTax', () => {
 
   it('MFJ with gains in 15% band', () => {
     // ordinaryTaxable = 120,000 - 32,200 = 87,800
-    // 0% room = 95,400 - 87,800 = 7,600 → first 7,600 at 0%
-    // remaining 12,400 at 15% = $1,860
-    expectDollars(calculateCapitalGainsTax(20_000, 120_000, 'marriedFilingJointly'), 1_860)
+    // 0% room = 98,900 - 87,800 = 11,100 → first 11,100 at 0%
+    // remaining 8,900 at 15% = $1,335
+    expectDollars(calculateCapitalGainsTax(20_000, 120_000, 'marriedFilingJointly'), 1_335)
   })
 })
 

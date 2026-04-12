@@ -5,8 +5,8 @@
 const FRA = 67 // Full Retirement Age for anyone born 1960 or later
 
 // 2026 PIA bend points (monthly AIME)
-const BEND_1 = 1_226
-const BEND_2 = 7_391
+const BEND_1 = 1_286
+const BEND_2 = 7_749
 
 function calculatePia(annualSalary: number): number {
   const aime = annualSalary / 12
