@@ -284,15 +284,17 @@ function getBaseHealthcareCost(
 ): number {
   if (!plan.enabled) return 0
 
+  const medicareStartAge = Math.max(employerEndAge, MEDICARE_AGE)
   let premium: number
   if (memberAge < employerEndAge) {
     // Employer phase — only 'own' members pay a premium; covered members pay $0
     premium = plan.employerCoverage === 'own' ? plan.employerPremium * 12 : 0
-  } else if (memberAge < MEDICARE_AGE) {
-    // Pre-Medicare gap phase
+  } else if (memberAge < medicareStartAge) {
+    // Pre-Medicare gap phase (only possible if employer coverage ended before 65)
     premium = plan.preMedicarePremium * 12
   } else {
-    // Medicare phase (IRMAA added separately by caller)
+    // Medicare phase — employer coverage has ended and member is 65+
+    // (IRMAA added separately by caller)
     premium = plan.medicareSupplementPremium * 12
   }
 
@@ -474,9 +476,9 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       const hcInflationRate = toEffectiveRate(plan.healthcareInflationRate)
       const inflatedCost = baseCost * Math.pow(1 + hcInflationRate, yearsElapsed)
 
-      // IRMAA surcharge for Medicare-age members (uses MAGI from 2 years prior)
+      // IRMAA surcharge — only once on Medicare (65+ and employer coverage has ended)
       let irmaaSurcharge = 0
-      if (memberAge >= MEDICARE_AGE) {
+      if (memberAge >= MEDICARE_AGE && memberAge >= employerEndAge) {
         const lookbackMagi = magiHistory.length >= 2
           ? magiHistory[magiHistory.length - 2]
           : magiHistory.length === 1
