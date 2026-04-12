@@ -403,15 +403,42 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
 
     const income = wageIncome + ssIncome + interestIncome + rmdWithdrawn
 
+    // --- Pre-tax employer healthcare premiums (Section 125 cafeteria plan) ---
+    // Employer-sponsored premiums reduce taxable wages and FICA wages.
+    let preTaxPremiumTotal = 0
+    const preTaxPremiumByMember = new Map<string, number>()
+    for (const member of household) {
+      const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+      if (!plan.enabled || plan.employerCoverage !== 'own') continue
+      const memberAge = member.ageAtSimulationStart + yearsElapsed
+      const employerEndAge = employerEndAges.get(member.id) ?? memberAge
+      if (memberAge >= employerEndAge) continue
+      const hcInflationRate = toEffectiveRate(healthcareInflationRate)
+      const basePremium = plan.employerPremium * 12
+      const inflatedPremium = basePremium * Math.pow(1 + hcInflationRate, yearsElapsed)
+      // Cap the deduction at the member's actual wages (can't deduct more than you earn)
+      const memberWages = w2WageByMember.get(member.id) ?? 0
+      const deduction = Math.min(inflatedPremium, memberWages)
+      if (deduction > 0) {
+        preTaxPremiumTotal += deduction
+        preTaxPremiumByMember.set(member.id, deduction)
+      }
+    }
+
+    // Reduce wage totals for tax purposes (not for income reporting)
+    const taxableWageIncome = wageIncome - preTaxPremiumTotal
+    const taxableW2WageIncome = w2WageIncome - preTaxPremiumTotal
+
     // --- Taxes ---
     // Federal: SS benefits are partially taxable based on provisional income
-    const taxableSs = calculateTaxableSocialSecurity(wageIncome + interestIncome, ssIncome, filingStatus)
-    const federalIncomeTax = calculateFederalTax(wageIncome + interestIncome + taxableSs, filingStatus)
+    const taxableSs = calculateTaxableSocialSecurity(taxableWageIncome + interestIncome, ssIncome, filingStatus)
+    const federalIncomeTax = calculateFederalTax(taxableWageIncome + interestIncome + taxableSs, filingStatus)
 
     // FICA: applied only to W-2 wages — not SS, interest, or "other" income
-    let ficaTax = calculateAdditionalMedicare(w2WageIncome, filingStatus)
-    for (const memberWages of w2WageByMember.values()) {
-      ficaTax += calculateFicaPerEarner(memberWages)
+    let ficaTax = calculateAdditionalMedicare(taxableW2WageIncome, filingStatus)
+    for (const [memberId, memberWages] of w2WageByMember) {
+      const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
+      ficaTax += calculateFicaPerEarner(memberWages - preTaxDeduction)
     }
 
     // State tax: Oregon does not tax SS benefits — pass wage income + interest
@@ -423,11 +450,12 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     let stateIncomeTax = 0
     if (statesWithIncome.size === 1) {
       const state = [...statesWithIncome][0]
-      stateIncomeTax = calculateStateTax(wageIncome + interestIncome, state, filingStatus)
+      stateIncomeTax = calculateStateTax(taxableWageIncome + interestIncome, state, filingStatus)
     } else {
       for (const [memberId, memberWages] of wageByMember) {
         const member = household.find((m) => m.id === memberId)!
-        stateIncomeTax += calculateStateTax(memberWages, member.state, filingStatus)
+        const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
+        stateIncomeTax += calculateStateTax(memberWages - preTaxDeduction, member.state, filingStatus)
       }
       // Add interest income to primary member's state
       stateIncomeTax += calculateStateTax(interestIncome, primaryState, filingStatus)
@@ -588,7 +616,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const totalTraditionalWithdrawn = rmdWithdrawn + rothConverted + traditionalWithdrawn
 
     // 3b. Investment taxes: capital gains on brokerage liquidations + NIIT on all NII
-    const baseOrdinaryIncome = wageIncome + interestIncome + taxableSs
+    const baseOrdinaryIncome = taxableWageIncome + interestIncome + taxableSs
     const capitalGainsTax = calculateCapitalGainsTax(
       brokerageWithdrawn,
       baseOrdinaryIncome,
@@ -600,21 +628,21 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     magiHistory.push(magi)
     const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
     const stateCapitalGainsTax = brokerageWithdrawn > 0
-      ? calculateStateTax(wageIncome + interestIncome + brokerageWithdrawn, primaryState, filingStatus)
-        - calculateStateTax(wageIncome + interestIncome, primaryState, filingStatus)
+      ? calculateStateTax(taxableWageIncome + interestIncome + brokerageWithdrawn, primaryState, filingStatus)
+        - calculateStateTax(taxableWageIncome + interestIncome, primaryState, filingStatus)
       : 0
 
     // 3c. Traditional IRA withdrawal — taxed as ordinary income, with SS taxability recalculated
     // IRA withdrawals increase provisional income, which can push more SS benefits into taxable territory.
     // Recompute taxable SS with IRA withdrawals included, then take the delta vs. what was already charged.
     const taxableSsFinal = totalTraditionalWithdrawn > 0
-      ? calculateTaxableSocialSecurity(wageIncome + interestIncome + totalTraditionalWithdrawn, ssIncome, filingStatus)
+      ? calculateTaxableSocialSecurity(taxableWageIncome + interestIncome + totalTraditionalWithdrawn, ssIncome, filingStatus)
       : taxableSs
     const traditionalIraFederalTax = totalTraditionalWithdrawn > 0
-      ? calculateFederalTax(wageIncome + interestIncome + taxableSsFinal + totalTraditionalWithdrawn, filingStatus)
+      ? calculateFederalTax(taxableWageIncome + interestIncome + taxableSsFinal + totalTraditionalWithdrawn, filingStatus)
         - federalIncomeTax
       : 0
-    const baseStateIncome = wageIncome + interestIncome
+    const baseStateIncome = taxableWageIncome + interestIncome
     const traditionalIraStateTax = totalTraditionalWithdrawn > 0
       ? calculateStateTax(baseStateIncome + totalTraditionalWithdrawn, primaryState, filingStatus)
         - calculateStateTax(baseStateIncome, primaryState, filingStatus)
