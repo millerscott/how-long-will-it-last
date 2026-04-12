@@ -8,15 +8,17 @@ interface Props {
   onDelete: (id: string) => void
   onRename: (id: string, name: string) => void
   onDuplicate: (id: string) => void
+  onMove: (id: string, direction: 'up' | 'down') => void
 }
 
-export default function SimulationSwitcher({ store, onLoad, onCreate, onDelete, onRename, onDuplicate }: Props) {
+export default function SimulationSwitcher({ store, onLoad, onCreate, onDelete, onRename, onDuplicate, onMove }: Props) {
   const [isCreating, setIsCreating] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const active = store.simulations.find((s) => s.id === store.activeId) ?? store.simulations[0]
+  const activeIndex = store.simulations.findIndex((s) => s.id === store.activeId)
 
   const handleCreate = () => {
     const name = inputValue.trim()
@@ -95,6 +97,21 @@ export default function SimulationSwitcher({ store, onLoad, onCreate, onDelete, 
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
+
+          <div className="flex flex-col gap-0.5">
+            <button
+              onClick={() => onMove(active.id, 'up')}
+              disabled={activeIndex <= 0}
+              className="px-1.5 py-0.5 text-xs leading-none rounded border bg-white text-gray-600 border-gray-300 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Move up"
+            >▲</button>
+            <button
+              onClick={() => onMove(active.id, 'down')}
+              disabled={activeIndex >= store.simulations.length - 1}
+              className="px-1.5 py-0.5 text-xs leading-none rounded border bg-white text-gray-600 border-gray-300 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Move down"
+            >▼</button>
+          </div>
 
           <button
             onClick={() => { setIsCreating(true); setInputValue('') }}

@@ -54,6 +54,15 @@ export default function HouseholdPanel({ config, onChange }: Props) {
     })
   }
 
+  function moveMember(id: string, direction: 'up' | 'down') {
+    const arr = [...config.household]
+    const idx = arr.findIndex((m) => m.id === id)
+    const next = direction === 'up' ? idx - 1 : idx + 1
+    if (next < 0 || next >= arr.length) return
+    ;[arr[idx], arr[next]] = [arr[next], arr[idx]]
+    onChange({ ...config, household: arr })
+  }
+
   // --- Income sources ---
   function memberWageSalary(memberId: string): number {
     return config.incomeSources
@@ -106,6 +115,15 @@ export default function HouseholdPanel({ config, onChange }: Props) {
     onChange({ ...config, householdAssets: config.householdAssets.filter((a) => a.id !== id) })
   }
 
+  function moveAsset(id: string, direction: 'up' | 'down') {
+    const arr = [...config.householdAssets]
+    const idx = arr.findIndex((a) => a.id === id)
+    const next = direction === 'up' ? idx - 1 : idx + 1
+    if (next < 1 || next >= arr.length) return // clamp to 1 so cash stays at index 0
+    ;[arr[idx], arr[next]] = [arr[next], arr[idx]]
+    onChange({ ...config, householdAssets: arr })
+  }
+
   function addContribution(assetId: string) {
     const asset = config.householdAssets.find((a) => a.id === assetId)!
     const newPeriod: ContributionPeriod = { id: uid(), startAge: 0, endAge: undefined, annualAmount: 0 }
@@ -141,6 +159,15 @@ export default function HouseholdPanel({ config, onChange }: Props) {
   }
   function removeExpense(id: string) {
     onChange({ ...config, expenses: config.expenses.filter((e) => e.id !== id) })
+  }
+
+  function moveExpense(id: string, direction: 'up' | 'down') {
+    const arr = [...config.expenses]
+    const idx = arr.findIndex((e) => e.id === id)
+    const next = direction === 'up' ? idx - 1 : idx + 1
+    if (next < 0 || next >= arr.length) return
+    ;[arr[idx], arr[next]] = [arr[next], arr[idx]]
+    onChange({ ...config, expenses: arr })
   }
   function changeExpenseType(id: string, newType: ExpenseType) {
     const existing = config.expenses.find((e) => e.id === id)!
@@ -264,6 +291,20 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   )}
                 </div>
 
+                <div className="flex flex-col gap-0.5 shrink-0 mt-4">
+                  <button
+                    onClick={() => moveMember(member.id, 'up')}
+                    disabled={i === 0}
+                    className="px-1.5 py-0.5 text-xs leading-none rounded border bg-white text-gray-500 border-gray-300 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Move up"
+                  >▲</button>
+                  <button
+                    onClick={() => moveMember(member.id, 'down')}
+                    disabled={i === config.household.length - 1}
+                    className="px-1.5 py-0.5 text-xs leading-none rounded border bg-white text-gray-500 border-gray-300 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Move down"
+                  >▼</button>
+                </div>
                 <button
                   onClick={() => removeMember(member.id)}
                   className="text-red-400 hover:text-red-600 text-xl leading-none shrink-0 mt-4"
@@ -654,7 +695,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
             })()}
 
             {/* Other accounts */}
-            {nonCashAssets.map((asset) => {
+            {nonCashAssets.map((asset, nonCashIdx) => {
               const isMM = asset.type === 'moneyMarketSavings'
               const baseAnnualExpenses = config.expenses.reduce((sum, e) => {
                 if (e.expenseType === 'periodic') return sum
@@ -710,12 +751,26 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   ) : (
                     <div className="col-span-4" />
                   )}
-                  <button
-                    onClick={() => removeAsset(asset.id)}
-                    className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center pt-1"
-                  >
-                    ×
-                  </button>
+                  <div className="col-span-1 flex items-center gap-1 pt-1">
+                    <div className="flex flex-col gap-0.5">
+                      <button
+                        onClick={() => moveAsset(asset.id, 'up')}
+                        disabled={nonCashIdx === 0}
+                        className="px-1 py-0.5 text-xs leading-none rounded border bg-white text-gray-500 border-gray-300 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title="Move up"
+                      >▲</button>
+                      <button
+                        onClick={() => moveAsset(asset.id, 'down')}
+                        disabled={nonCashIdx === nonCashAssets.length - 1}
+                        className="px-1 py-0.5 text-xs leading-none rounded border bg-white text-gray-500 border-gray-300 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                        title="Move down"
+                      >▼</button>
+                    </div>
+                    <button
+                      onClick={() => removeAsset(asset.id)}
+                      className="text-red-400 hover:text-red-600 text-lg leading-none"
+                    >×</button>
+                  </div>
                 </div>
 
                 {/* Contribution periods */}
@@ -830,7 +885,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                 <span className="col-span-1" />
               </div>
             )}
-            {config.expenses.map((exp) => (
+            {config.expenses.map((exp, expIdx) => (
               <div key={exp.id} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded p-2">
                 <select
                   className="col-span-2 input text-xs"
@@ -904,7 +959,23 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     onChange={(e) => updateExpense(exp.id, { inflationAdjusted: e.target.checked })}
                   />
                 </div>
-                <button onClick={() => removeExpense(exp.id)} className="col-span-1 text-red-400 hover:text-red-600 text-lg leading-none text-center">×</button>
+                <div className="col-span-1 flex items-center gap-1">
+                  <div className="flex flex-col gap-0.5">
+                    <button
+                      onClick={() => moveExpense(exp.id, 'up')}
+                      disabled={expIdx === 0}
+                      className="px-1 py-0.5 text-xs leading-none rounded border bg-white text-gray-500 border-gray-300 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Move up"
+                    >▲</button>
+                    <button
+                      onClick={() => moveExpense(exp.id, 'down')}
+                      disabled={expIdx === config.expenses.length - 1}
+                      className="px-1 py-0.5 text-xs leading-none rounded border bg-white text-gray-500 border-gray-300 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                      title="Move down"
+                    >▼</button>
+                  </div>
+                  <button onClick={() => removeExpense(exp.id)} className="text-red-400 hover:text-red-600 text-lg leading-none">×</button>
+                </div>
               </div>
             ))}
             {config.expenses.length > 0 && (() => {

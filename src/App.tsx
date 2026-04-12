@@ -188,6 +188,18 @@ export default function App() {
     })
   }, [setStore])
 
+  const moveSimulation = useCallback((id: string, direction: 'up' | 'down') => {
+    setStore((prev) => {
+      const idx = prev.simulations.findIndex((s) => s.id === id)
+      if (idx === -1) return prev
+      const next = direction === 'up' ? idx - 1 : idx + 1
+      if (next < 0 || next >= prev.simulations.length) return prev
+      const sims = [...prev.simulations]
+      ;[sims[idx], sims[next]] = [sims[next], sims[idx]]
+      return { ...prev, simulations: sims }
+    })
+  }, [setStore])
+
   const duplicateSimulation = useCallback((id: string) => {
     setStore((prev) => {
       const source = prev.simulations.find((s) => s.id === id)
@@ -232,6 +244,7 @@ export default function App() {
         onDelete={deleteSimulation}
         onRename={renameSimulation}
         onDuplicate={duplicateSimulation}
+        onMove={moveSimulation}
       />
 
       {/* Summary stat boxes */}
