@@ -85,8 +85,8 @@ export default function ProjectionChart({ snapshots }: Props) {
     return null
   }
 
-  // Collect all unique asset labels (preserving order from first snapshot)
-  const allLabels = snapshots[0]?.assetBreakdown.map((a) => a.label) ?? []
+  // Collect unique asset labels preserving order from first snapshot
+  const allLabels = [...new Set(snapshots[0]?.assetBreakdown.map((a) => a.label) ?? [])]
 
   // Build chart data — group by label (sum if multiple accounts share a label)
   const chartData = snapshots.map((s) => {
