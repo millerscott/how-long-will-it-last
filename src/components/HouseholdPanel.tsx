@@ -679,9 +679,13 @@ export default function HouseholdPanel({ config, onChange }: Props) {
 
             {/* Cash account — always present, non-removable */}
             {cashAsset && (() => {
+              const startAge = config.household[0]?.ageAtSimulationStart ?? 0
               const baseAnnualExpenses = config.expenses.reduce((sum, e) => {
                 if (e.expenseType === 'periodic') return sum
-                return sum + ((e as RegularExpense | EducationExpense).frequency === 'monthly' ? e.amount * 12 : e.amount)
+                if (e.expenseType === 'education') return sum  // covered by 529, not cash
+                if (e.startAge !== undefined && e.startAge > startAge) return sum
+                if (e.endAge !== undefined && e.endAge < startAge) return sum
+                return sum + ((e as RegularExpense).frequency === 'monthly' ? e.amount * 12 : e.amount)
               }, 0)
               const cashReserveTarget = (cashAsset.monthsReserve ?? 0) * baseAnnualExpenses / 12
               return (
@@ -723,9 +727,13 @@ export default function HouseholdPanel({ config, onChange }: Props) {
             {/* Other accounts */}
             {nonCashAssets.map((asset, nonCashIdx) => {
               const isMM = asset.type === 'moneyMarketSavings'
+              const startAge = config.household[0]?.ageAtSimulationStart ?? 0
               const baseAnnualExpenses = config.expenses.reduce((sum, e) => {
                 if (e.expenseType === 'periodic') return sum
-                return sum + ((e as RegularExpense | EducationExpense).frequency === 'monthly' ? e.amount * 12 : e.amount)
+                if (e.expenseType === 'education') return sum  // covered by 529, not cash
+                if (e.startAge !== undefined && e.startAge > startAge) return sum
+                if (e.endAge !== undefined && e.endAge < startAge) return sum
+                return sum + ((e as RegularExpense).frequency === 'monthly' ? e.amount * 12 : e.amount)
               }, 0)
               const mmReserveTarget = isMM ? (asset.monthsReserve ?? 0) * baseAnnualExpenses / 12 : 0
               return (

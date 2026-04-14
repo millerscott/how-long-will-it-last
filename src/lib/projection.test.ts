@@ -1637,3 +1637,114 @@ describe('netCashFlow reflects all taxes', () => {
     expect(s.netCashFlow).toBeCloseTo(s.income - totalTax - s.expenses, 0)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Early withdrawal penalty
+// ---------------------------------------------------------------------------
+
+describe('early withdrawal penalty', () => {
+  /** Base: person age 55, Roth account with known contribution basis, $50k/yr expenses, no income */
+  function rothConfig(rothBalance: number, rothBasis: number | undefined, expensePerYear = 50_000): AppConfig {
+    return baseConfig({
+      simulationYears: 5,
+      household: [member({ ageAtSimulationStart: 55 })],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+        {
+          id: 'roth',
+          type: 'retirementRoth',
+          balanceAtSimulationStart: rothBalance,
+          rothContributionBasis: rothBasis,
+          contributions: [],
+        },
+      ],
+      expenses: [{
+        id: 'e1', name: 'Living', amount: expensePerYear, expenseType: 'regular' as const,
+        frequency: 'annual' as const, inflationAdjusted: false,
+      }],
+    })
+  }
+
+  it('no penalty when Roth basis fully covers withdrawals at age 55-58', () => {
+    // $300k basis, $50k/yr × 4 years = $200k total withdrawals from basis — should be penalty-free
+    const snaps = projectFinances(rothConfig(500_000, 300_000))
+    const earlyYears = snaps.filter((s) => s.age < 59)
+    expect(earlyYears.length).toBeGreaterThan(0)
+    earlyYears.forEach((s) => {
+      expect(s.earlyWithdrawalPenalty).toBe(0)
+    })
+  })
+
+  it('penalty applies when Roth earnings (above basis) are withdrawn early', () => {
+    // $100k balance, $0 basis — all withdrawals are earnings, all penalized
+    const snaps = projectFinances(rothConfig(100_000, 0))
+    const earlyYears = snaps.filter((s) => s.age < 59)
+    earlyYears.forEach((s) => {
+      if (s.earlyWithdrawalPenalty > 0 || snaps.find((x) => x.age < s.age && x.depleted)) return
+      expect(s.earlyWithdrawalPenalty).toBeGreaterThan(0)
+    })
+    // At least age 55 should have a penalty
+    const age55 = snaps.find((s) => s.age === 55)!
+    expect(age55.earlyWithdrawalPenalty).toBeGreaterThan(0)
+  })
+
+  it('basis defaults to balanceAtSimulationStart when rothContributionBasis is undefined', () => {
+    // Same as explicit $500k basis — no penalty
+    const snaps = projectFinances(rothConfig(500_000, undefined))
+    snaps.filter((s) => s.age < 59).forEach((s) => {
+      expect(s.earlyWithdrawalPenalty).toBe(0)
+    })
+  })
+
+  it('no penalty when Roth covers full shortfall even with Traditional IRA present', () => {
+    // Roth has enough balance and basis; Traditional should NOT be touched
+    const cfg = baseConfig({
+      simulationYears: 4,
+      household: [member({ ageAtSimulationStart: 55 })],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 0, contributions: [] },
+        { id: 'roth', type: 'retirementRoth', balanceAtSimulationStart: 500_000, rothContributionBasis: 500_000, contributions: [] },
+        { id: 'trad', type: 'retirementTraditional', balanceAtSimulationStart: 200_000, contributions: [] },
+      ],
+      expenses: [{
+        id: 'e1', name: 'Living', amount: 60_000, expenseType: 'regular' as const,
+        frequency: 'annual' as const, inflationAdjusted: false,
+      }],
+    })
+    const snaps = projectFinances(cfg)
+    // $500k Roth covers $60k/yr × 4 years = $240k easily; Traditional should not be touched
+    snaps.filter((s) => s.age < 59).forEach((s) => {
+      expect(s.earlyWithdrawalPenalty).toBe(0)
+    })
+  })
+
+  it('in-simulation contributions accumulate as penalty-free basis', () => {
+    // Roth starts at $0, $60k/yr contributions from age 55 to 58
+    // Each year: contribute $60k to basis, then waterfall pulls for $50k expenses
+    // Basis grows by $60k then shrinks by $50k per year — should always be penalty-free
+    const cfg = baseConfig({
+      simulationYears: 5,
+      household: [member({ ageAtSimulationStart: 55 })],
+      householdAssets: [
+        { id: 'cash', type: 'cash', balanceAtSimulationStart: 100_000, contributions: [] },
+        {
+          id: 'roth',
+          type: 'retirementRoth',
+          balanceAtSimulationStart: 500_000,
+          rothContributionBasis: undefined,
+          contributions: [{ id: 'c1', startAge: 55, endAge: 58, annualAmount: 60_000 }],
+        },
+      ],
+      expenses: [{
+        id: 'e1', name: 'Living', amount: 200_000, expenseType: 'regular' as const,
+        frequency: 'annual' as const, inflationAdjusted: false,
+      }],
+    })
+    const snaps = projectFinances(cfg)
+    // Age 55: basis = $500k (starting) + $60k (contribution this year) = $560k before waterfall
+    // Waterfall pulls ~$100k (cash covers some, Roth covers the rest)
+    // No penalty expected
+    const age55 = snaps.find((s) => s.age === 55)!
+    expect(age55.earlyWithdrawalPenalty).toBe(0)
+  })
+})
