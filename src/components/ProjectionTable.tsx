@@ -85,7 +85,7 @@ export default function ProjectionTable({ snapshots }: Props) {
           </thead>
           <tbody>
             {snapshots.map((s) => {
-              const totalTax = s.federalIncomeTax + s.capitalGainsTax + s.niit + s.traditionalIraTax + s.ficaTax + s.stateIncomeTax
+              const totalTax = s.federalIncomeTax + s.capitalGainsTax + s.niit + s.traditionalIraTax + s.ficaTax + s.stateIncomeTax + s.earlyWithdrawalPenalty
               const incomeOpen = popover?.age === s.age && popover?.type === 'income'
               const taxOpen = popover?.age === s.age && popover?.type === 'tax'
               const expensesOpen = popover?.age === s.age && popover?.type === 'expenses'
@@ -107,6 +107,9 @@ export default function ProjectionTable({ snapshots }: Props) {
                     )}
                     {s.marketCrashActive && (
                       <span className="ml-1 text-orange-500 text-xs" title="Market crash/recovery active">↓</span>
+                    )}
+                    {s.earlyWithdrawalPenalty > 0 && (
+                      <span className="ml-1 text-red-500 text-xs" title="Early withdrawal penalty (10%) applied">⚠</span>
                     )}
                   </td>
                   {/* Income — clickable */}
@@ -201,10 +204,11 @@ export default function ProjectionTable({ snapshots }: Props) {
                 { label: 'State Income Tax', value: activeSnapshot.stateIncomeTax },
                 { label: 'Capital Gains Tax', value: activeSnapshot.capitalGainsTax },
                 { label: 'Net Investment Income Tax', value: activeSnapshot.niit },
+                { label: 'Early Withdrawal Penalty (10%)', value: activeSnapshot.earlyWithdrawalPenalty },
               ]} />
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>
-                <span>{fmt.format(activeSnapshot.federalIncomeTax + activeSnapshot.capitalGainsTax + activeSnapshot.niit + activeSnapshot.traditionalIraTax + activeSnapshot.ficaTax + activeSnapshot.stateIncomeTax)}</span>
+                <span>{fmt.format(activeSnapshot.federalIncomeTax + activeSnapshot.capitalGainsTax + activeSnapshot.niit + activeSnapshot.traditionalIraTax + activeSnapshot.ficaTax + activeSnapshot.stateIncomeTax + activeSnapshot.earlyWithdrawalPenalty)}</span>
               </div>
             </>
           ) : (

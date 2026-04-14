@@ -83,6 +83,7 @@ export interface YearlySnapshot {
   netCashFlow: number
   totalAssets: number
   assetBreakdown: AssetBalance[]
+  earlyWithdrawalPenalty: number
   rmdWithdrawn: number
   rothConverted: number
   depleted: boolean
@@ -106,7 +107,7 @@ export function applyWaterfall(
   householdAssets: AppConfig['householdAssets'],
   primaryAge: number,
   annualExpenses = 0,
-): { brokerageWithdrawn: number; traditionalWithdrawn: number } {
+): { brokerageWithdrawn: number; traditionalWithdrawn: number; rothWithdrawn: number } {
   const monthlyExpense = annualExpenses / 12
 
   // Compute reserve targets
@@ -128,7 +129,7 @@ export function applyWaterfall(
   }
 
   const totalPullNeeded = cashShortfall + mmTopUpTotal
-  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0 }
+  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0 }
 
   const order: AssetType[] = primaryAge < 60
     ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
@@ -137,6 +138,7 @@ export function applyWaterfall(
   let remaining = totalPullNeeded
   let brokerageWithdrawn = 0
   let traditionalWithdrawn = 0
+  let rothWithdrawn = 0
 
   for (const assetType of order) {
     if (remaining <= 0) break
@@ -151,6 +153,7 @@ export function applyWaterfall(
       accountBalances.set(asset.id, balance - withdrawal)
       if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
       if (assetType === 'retirementTraditional') traditionalWithdrawn += withdrawal
+      if (assetType === 'retirementRoth') rothWithdrawn += withdrawal
       remaining -= withdrawal
     }
   }
@@ -172,7 +175,7 @@ export function applyWaterfall(
     accountBalances.set(cashAssetId, cashNow - transfer)
   }
 
-  return { brokerageWithdrawn, traditionalWithdrawn }
+  return { brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn }
 }
 
 /**
@@ -601,8 +604,20 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     //    (education costs are handled by 529 draw; including them would inflate reserve targets)
     let brokerageWithdrawn = 0
     let traditionalWithdrawn = 0
+    let rothWithdrawn = 0
     if (cashAsset) {
-      ;({ brokerageWithdrawn, traditionalWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal))
+      ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal))
+    }
+
+    // Early withdrawal penalty: 10% on traditional and Roth withdrawals before age 59
+    // (IRS rule: distributions before 59½ trigger the penalty; we use age < 59 in annual modeling)
+    const EARLY_WITHDRAWAL_AGE = 59
+    const earlyWithdrawalPenalty = primaryAge < EARLY_WITHDRAWAL_AGE
+      ? (traditionalWithdrawn + rothWithdrawn) * 0.10
+      : 0
+    if (cashAsset && earlyWithdrawalPenalty > 0) {
+      const prev = accountBalances.get(cashAsset.id) ?? 0
+      accountBalances.set(cashAsset.id, prev - earlyWithdrawalPenalty)
     }
 
     if (brokerageWithdrawn > 0) {
@@ -650,6 +665,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
 
     const postWaterfallTaxes = capitalGainsTax + niit + stateCapitalGainsTax + traditionalIraTax
+    // earlyWithdrawalPenalty already deducted from cash above; include in postWaterfallTaxes only for netCashFlow accounting
     if (cashAsset && postWaterfallTaxes > 0) {
       const prev = accountBalances.get(cashAsset.id) ?? 0
       accountBalances.set(cashAsset.id, prev - postWaterfallTaxes)
@@ -689,9 +705,10 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       traditionalIraTax,
       ficaTax,
       stateIncomeTax: stateIncomeTax + stateCapitalGainsTax,
+      earlyWithdrawalPenalty,
       expenses: expenseTotal,
       expenseBreakdown,
-      netCashFlow: netCashFlow - postWaterfallTaxes,
+      netCashFlow: netCashFlow - postWaterfallTaxes - earlyWithdrawalPenalty,
       totalAssets: Math.max(0, totalAssets),
       assetBreakdown,
       rmdWithdrawn,
