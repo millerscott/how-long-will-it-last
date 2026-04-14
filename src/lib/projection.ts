@@ -26,6 +26,7 @@ const RMD_DIVISORS: Record<number, number> = {
 }
 
 const RMD_START_AGE = 73
+const EARLY_WITHDRAWAL_AGE = 59
 
 const EQUITY_ASSET_TYPES = new Set<AssetType>([
   'taxableBrokerage',
@@ -322,6 +323,423 @@ function getBaseHealthcareCost(
   return premium + outOfPocket
 }
 
+/** Shared context passed to each simulation phase */
+interface SimContext {
+  config: AppConfig
+  household: AppConfig['household']
+  householdAssets: AppConfig['householdAssets']
+  incomeSources: AppConfig['incomeSources']
+  expenses: AppConfig['expenses']
+  assetRates: AppConfig['assetRates']
+  marketCrashes: AppConfig['marketCrashes']
+  inflationRate: number
+  healthcareInflationRate: number
+  ssCola: number
+  rothConversionTargetBracket: AppConfig['rothConversionTargetBracket']
+  filingStatus: FilingStatus
+  realMode: boolean
+  currentAge: number
+  simulationEndAge: number
+  toEffectiveRate: (nominal: number) => number
+  employerEndAges: Map<string, number>
+  accountBalances: Map<string, number>
+  rothBasisMap: Map<string, number>
+  cashAsset: AppConfig['householdAssets'][number] | undefined
+  primaryMember: HouseholdMember
+  magiHistory: number[]
+}
+
+interface IncomeResult {
+  wageIncome: number
+  ssIncome: number
+  w2WageIncome: number
+  interestIncome: number
+  rmdWithdrawn: number
+  income: number
+  wageByMember: Map<string, number>
+  w2WageByMember: Map<string, number>
+  incomeBreakdown: IncomeBreakdownItem[]
+}
+
+function computeIncome(ctx: SimContext, yearsElapsed: number): IncomeResult {
+  const { incomeSources, household, householdAssets, assetRates, toEffectiveRate, ssCola, simulationEndAge, accountBalances } = ctx
+
+  let wageIncome = 0
+  let ssIncome = 0
+  let w2WageIncome = 0
+  const wageByMember = new Map<string, number>()
+  const w2WageByMember = new Map<string, number>()
+  const incomeBreakdown: IncomeBreakdownItem[] = []
+
+  for (const src of incomeSources) {
+    const member = household.find((m) => m.id === src.memberId)
+    if (!member) continue
+    const memberAge = member.ageAtSimulationStart + yearsElapsed
+    const effectiveEndAge = src.endAge ?? simulationEndAge
+    if (memberAge < src.startAge || memberAge > effectiveEndAge) continue
+    const yearsOfGrowth = memberAge - member.ageAtSimulationStart
+    const isSS = src.incomeType === 'socialSecurity'
+    const growthRate = toEffectiveRate(isSS ? ssCola : src.annualGrowthRate)
+    const amount = src.annualAmount * Math.pow(1 + growthRate, yearsOfGrowth)
+    if (isSS) {
+      ssIncome += amount
+    } else {
+      incomeBreakdown.push({ label: src.name, amount })
+      wageIncome += amount
+      wageByMember.set(src.memberId, (wageByMember.get(src.memberId) ?? 0) + amount)
+      if (src.incomeType === 'wage') {
+        w2WageIncome += amount
+        w2WageByMember.set(src.memberId, (w2WageByMember.get(src.memberId) ?? 0) + amount)
+      }
+    }
+  }
+  if (ssIncome > 0) {
+    incomeBreakdown.push({ label: 'Social Security', amount: ssIncome })
+  }
+
+  // Interest income (cash + money market — taxed annually as ordinary income)
+  let interestIncome = 0
+  for (const asset of householdAssets) {
+    if (asset.type === 'cash' || asset.type === 'moneyMarketSavings') {
+      const balance = accountBalances.get(asset.id) ?? 0
+      const interest = balance * toEffectiveRate(assetRates[asset.type])
+      if (interest > 0) {
+        interestIncome += interest
+        incomeBreakdown.push({ label: `Interest (${ASSET_TYPE_LABELS[asset.type]})`, amount: interest })
+      }
+    }
+  }
+
+  // RMD: forced withdrawal from traditional accounts for members age 73+
+  const rmdWithdrawn = calculateRmd(accountBalances, householdAssets, household, yearsElapsed)
+  if (rmdWithdrawn > 0) {
+    incomeBreakdown.push({ label: 'Required Minimum Distribution', amount: rmdWithdrawn })
+  }
+
+  const income = wageIncome + ssIncome + interestIncome + rmdWithdrawn
+
+  return { wageIncome, ssIncome, w2WageIncome, interestIncome, rmdWithdrawn, income, wageByMember, w2WageByMember, incomeBreakdown }
+}
+
+interface InitialTaxResult {
+  taxableWageIncome: number
+  taxableW2WageIncome: number
+  taxableSs: number
+  federalIncomeTax: number
+  ficaTax: number
+  stateIncomeTax: number
+  primaryStateBaseIncome: number
+  preTaxPremiumByMember: Map<string, number>
+}
+
+function computeInitialTaxes(
+  ctx: SimContext,
+  yearsElapsed: number,
+  inc: IncomeResult,
+): InitialTaxResult {
+  const { household, filingStatus, toEffectiveRate, healthcareInflationRate, employerEndAges, primaryMember } = ctx
+
+  // Pre-tax employer healthcare premiums (Section 125 cafeteria plan)
+  let preTaxPremiumTotal = 0
+  const preTaxPremiumByMember = new Map<string, number>()
+  for (const member of household) {
+    const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+    if (!plan.enabled || plan.employerCoverage !== 'own') continue
+    const memberAge = member.ageAtSimulationStart + yearsElapsed
+    const employerEndAge = employerEndAges.get(member.id) ?? memberAge
+    if (memberAge >= employerEndAge) continue
+    const hcInflationRate = toEffectiveRate(healthcareInflationRate)
+    const basePremium = plan.employerPremium * 12
+    const inflatedPremium = basePremium * Math.pow(1 + hcInflationRate, yearsElapsed)
+    const memberWages = inc.w2WageByMember.get(member.id) ?? 0
+    const deduction = Math.min(inflatedPremium, memberWages)
+    if (deduction > 0) {
+      preTaxPremiumTotal += deduction
+      preTaxPremiumByMember.set(member.id, deduction)
+    }
+  }
+
+  const taxableWageIncome = inc.wageIncome - preTaxPremiumTotal
+  const taxableW2WageIncome = inc.w2WageIncome - preTaxPremiumTotal
+
+  // Federal tax
+  const taxableSs = calculateTaxableSocialSecurity(taxableWageIncome + inc.interestIncome, inc.ssIncome, filingStatus)
+  const federalIncomeTax = calculateFederalTax(taxableWageIncome + inc.interestIncome + taxableSs, filingStatus)
+
+  // FICA
+  let ficaTax = calculateAdditionalMedicare(taxableW2WageIncome, filingStatus)
+  for (const [memberId, memberWages] of inc.w2WageByMember) {
+    const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
+    ficaTax += calculateFicaPerEarner(memberWages - preTaxDeduction)
+  }
+
+  // State tax: aggregate income by state, compute once per state
+  const primaryState = primaryMember.state
+  const incomeByState = new Map<string, number>()
+  for (const [memberId, memberWages] of inc.wageByMember) {
+    const member = household.find((m) => m.id === memberId)!
+    const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
+    incomeByState.set(member.state, (incomeByState.get(member.state) ?? 0) + memberWages - preTaxDeduction)
+  }
+  incomeByState.set(primaryState, (incomeByState.get(primaryState) ?? 0) + inc.interestIncome)
+  let stateIncomeTax = 0
+  for (const [state, stateIncome] of incomeByState) {
+    stateIncomeTax += calculateStateTax(stateIncome, state, filingStatus)
+  }
+  const primaryStateBaseIncome = incomeByState.get(primaryState) ?? 0
+
+  return { taxableWageIncome, taxableW2WageIncome, taxableSs, federalIncomeTax, ficaTax, stateIncomeTax, primaryStateBaseIncome, preTaxPremiumByMember }
+}
+
+interface ExpenseResult {
+  regularExpenseTotal: number
+  educationExpenseTotal: number
+  expenseTotal: number
+  expenseBreakdown: IncomeBreakdownItem[]
+}
+
+function computeExpenses(ctx: SimContext, yearsElapsed: number, primaryAge: number): ExpenseResult {
+  const { expenses, household, inflationRate, healthcareInflationRate, realMode, currentAge, toEffectiveRate, employerEndAges, filingStatus, magiHistory } = ctx
+
+  let regularExpenseTotal = 0
+  let educationExpenseTotal = 0
+  const expenseBreakdown: IncomeBreakdownItem[] = []
+
+  for (const exp of expenses) {
+    const effectiveStart = exp.startAge ?? currentAge
+    if (primaryAge < effectiveStart) continue
+    if (exp.endAge !== undefined && primaryAge > exp.endAge) continue
+
+    if (exp.expenseType === 'periodic') {
+      const yearsSinceFirst = primaryAge - effectiveStart
+      if (yearsSinceFirst % exp.intervalYears !== 0) continue
+      const inflated = exp.inflationAdjusted
+        ? (realMode ? exp.amount : exp.amount * Math.pow(1 + inflationRate, yearsElapsed))
+        : (realMode ? exp.amount / Math.pow(1 + inflationRate, yearsElapsed) : exp.amount)
+      regularExpenseTotal += inflated
+      expenseBreakdown.push({ label: exp.name, amount: inflated })
+    } else {
+      const annual = exp.frequency === 'monthly' ? exp.amount * 12 : exp.amount
+      const inflated = exp.inflationAdjusted
+        ? (realMode ? annual : annual * Math.pow(1 + inflationRate, yearsElapsed))
+        : (realMode ? annual / Math.pow(1 + inflationRate, yearsElapsed) : annual)
+      if (exp.expenseType === 'education') {
+        educationExpenseTotal += inflated
+      } else {
+        regularExpenseTotal += inflated
+      }
+      expenseBreakdown.push({ label: exp.name, amount: inflated })
+    }
+  }
+
+  // Healthcare expenses (per member, phase-based with healthcare-specific inflation + IRMAA)
+  for (const member of household) {
+    const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
+    if (!plan.enabled) continue
+    const memberAge = member.ageAtSimulationStart + yearsElapsed
+    const employerEndAge = employerEndAges.get(member.id) ?? memberAge
+    const baseCost = getBaseHealthcareCost(plan, memberAge, employerEndAge)
+    if (baseCost <= 0 && memberAge < MEDICARE_AGE) continue
+
+    const hcInflationRate = toEffectiveRate(healthcareInflationRate)
+    const inflatedCost = baseCost * Math.pow(1 + hcInflationRate, yearsElapsed)
+
+    let irmaaSurcharge = 0
+    if (memberAge >= MEDICARE_AGE && memberAge >= employerEndAge) {
+      const lookbackMagi = magiHistory.length >= 2
+        ? magiHistory[magiHistory.length - 2]
+        : magiHistory.length === 1
+          ? magiHistory[0]
+          : 0
+      irmaaSurcharge = calculateIrmaa(lookbackMagi, filingStatus)
+      if (realMode && yearsElapsed > 0) {
+        irmaaSurcharge = irmaaSurcharge / Math.pow(1 + inflationRate, yearsElapsed)
+      }
+    }
+
+    const memberHealthcareCost = inflatedCost + irmaaSurcharge
+    regularExpenseTotal += memberHealthcareCost
+    const label = household.length > 1 ? `Healthcare (${member.name || 'Member'})` : 'Healthcare'
+    expenseBreakdown.push({ label, amount: memberHealthcareCost })
+  }
+
+  return { regularExpenseTotal, educationExpenseTotal, expenseTotal: regularExpenseTotal + educationExpenseTotal, expenseBreakdown }
+}
+
+interface AccountUpdateResult {
+  rothConverted: number
+  brokerageWithdrawn: number
+  traditionalWithdrawn: number
+  rothWithdrawn: number
+  rothPenaltyFreeWithdrawn: number
+  earlyWithdrawalPenalty: number
+}
+
+function updateAccounts(
+  ctx: SimContext,
+  primaryAge: number,
+  netCashFlow: number,
+  educationExpenseTotal: number,
+  regularExpenseTotal: number,
+  taxableWageIncome: number,
+  interestIncome: number,
+  taxableSs: number,
+  incomeBreakdown: IncomeBreakdownItem[],
+): AccountUpdateResult {
+  const { householdAssets, accountBalances, cashAsset, rothBasisMap, rothConversionTargetBracket, filingStatus } = ctx
+
+  // 1. Contributions
+  let totalContributions = 0
+  for (const asset of householdAssets) {
+    if (asset.type === 'cash') continue
+    const activePeriod = asset.contributions.find(
+      (c) => primaryAge >= c.startAge && (c.endAge === undefined || primaryAge <= c.endAge)
+    )
+    const contribution = activePeriod?.annualAmount ?? 0
+    if (contribution > 0) {
+      const prev = accountBalances.get(asset.id) ?? 0
+      accountBalances.set(asset.id, prev + contribution)
+      totalContributions += contribution
+      if (asset.type === 'retirementRoth') {
+        const prevBasis = rothBasisMap.get(asset.id) ?? 0
+        rothBasisMap.set(asset.id, prevBasis + contribution)
+      }
+    }
+  }
+
+  // 2. Net cash flow settles into cash
+  if (cashAsset) {
+    const prev = accountBalances.get(cashAsset.id) ?? 0
+    accountBalances.set(cashAsset.id, prev + netCashFlow - totalContributions)
+  }
+
+  // 2b. Education draw: 529 accounts reimburse cash
+  if (educationExpenseTotal > 0 && cashAsset) {
+    const covered = draw529ForEducation(accountBalances, householdAssets, educationExpenseTotal)
+    if (covered > 0) {
+      const prev = accountBalances.get(cashAsset.id) ?? 0
+      accountBalances.set(cashAsset.id, prev + covered)
+    }
+  }
+
+  // 2c. Roth conversion — move traditional → Roth to fill up to target bracket
+  let rothConverted = 0
+  if (rothConversionTargetBracket !== null && primaryAge < RMD_START_AGE) {
+    const traditionalAccounts = householdAssets.filter((a) => a.type === 'retirementTraditional')
+    const rothAccounts = householdAssets.filter((a) => a.type === 'retirementRoth')
+    const totalTradBalance = traditionalAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
+
+    if (totalTradBalance > 0 && rothAccounts.length > 0) {
+      const baseOrdinary = taxableWageIncome + interestIncome + taxableSs
+      rothConverted = calculateRothConversionAmount(baseOrdinary, totalTradBalance, filingStatus, rothConversionTargetBracket)
+
+      if (rothConverted > 0) {
+        for (const acct of traditionalAccounts) {
+          const balance = accountBalances.get(acct.id) ?? 0
+          if (balance <= 0) continue
+          accountBalances.set(acct.id, balance - (balance / totalTradBalance) * rothConverted)
+        }
+        const totalRothBalance = rothAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
+        for (const acct of rothAccounts) {
+          const balance = accountBalances.get(acct.id) ?? 0
+          const share = totalRothBalance > 0 ? balance / totalRothBalance : 1 / rothAccounts.length
+          accountBalances.set(acct.id, balance + share * rothConverted)
+        }
+        incomeBreakdown.push({ label: 'Roth Conversion', amount: rothConverted })
+      }
+    }
+  }
+
+  // 3. Withdrawal waterfall
+  let brokerageWithdrawn = 0
+  let traditionalWithdrawn = 0
+  let rothWithdrawn = 0
+  let rothPenaltyFreeWithdrawn = 0
+  if (cashAsset) {
+    ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal, rothBasisMap))
+  }
+
+  // Early withdrawal penalty: 10% on traditional and Roth earnings withdrawn before age 59
+  const earlyWithdrawalPenalty = primaryAge < EARLY_WITHDRAWAL_AGE
+    ? (traditionalWithdrawn + (rothWithdrawn - rothPenaltyFreeWithdrawn)) * 0.10
+    : 0
+  if (cashAsset && earlyWithdrawalPenalty > 0) {
+    const prev = accountBalances.get(cashAsset.id) ?? 0
+    accountBalances.set(cashAsset.id, prev - earlyWithdrawalPenalty)
+  }
+
+  if (brokerageWithdrawn > 0) {
+    incomeBreakdown.push({ label: 'Capital Gains (Taxable Brokerage)', amount: brokerageWithdrawn })
+  }
+  if (traditionalWithdrawn > 0) {
+    incomeBreakdown.push({ label: 'Traditional IRA Withdrawal', amount: traditionalWithdrawn })
+  }
+
+  return { rothConverted, brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn, earlyWithdrawalPenalty }
+}
+
+interface PostWaterfallTaxResult {
+  capitalGainsTax: number
+  niit: number
+  stateCapitalGainsTax: number
+  traditionalIraTax: number
+  postWaterfallTaxes: number
+}
+
+function computePostWaterfallTaxes(
+  ctx: SimContext,
+  tax: InitialTaxResult,
+  inc: IncomeResult,
+  acct: AccountUpdateResult,
+): PostWaterfallTaxResult {
+  const { filingStatus, primaryMember, magiHistory } = ctx
+
+  const totalTraditionalWithdrawn = inc.rmdWithdrawn + acct.rothConverted + acct.traditionalWithdrawn
+  const baseOrdinaryIncome = tax.taxableWageIncome + inc.interestIncome + tax.taxableSs
+
+  const capitalGainsTax = calculateCapitalGainsTax(acct.brokerageWithdrawn, baseOrdinaryIncome, filingStatus)
+
+  const magi = baseOrdinaryIncome + acct.brokerageWithdrawn + totalTraditionalWithdrawn
+  magiHistory.push(magi)
+  const niit = calculateNiit(inc.interestIncome + acct.brokerageWithdrawn, magi, filingStatus)
+
+  const primaryState = primaryMember.state
+  const stateCapitalGainsTax = acct.brokerageWithdrawn > 0
+    ? calculateStateTax(tax.primaryStateBaseIncome + acct.brokerageWithdrawn, primaryState, filingStatus)
+      - calculateStateTax(tax.primaryStateBaseIncome, primaryState, filingStatus)
+    : 0
+
+  const taxableSsFinal = totalTraditionalWithdrawn > 0
+    ? calculateTaxableSocialSecurity(tax.taxableWageIncome + inc.interestIncome + totalTraditionalWithdrawn, inc.ssIncome, filingStatus)
+    : tax.taxableSs
+  const traditionalIraFederalTax = totalTraditionalWithdrawn > 0
+    ? calculateFederalTax(tax.taxableWageIncome + inc.interestIncome + taxableSsFinal + totalTraditionalWithdrawn, filingStatus)
+      - tax.federalIncomeTax
+    : 0
+  const traditionalIraStateTax = totalTraditionalWithdrawn > 0
+    ? calculateStateTax(tax.primaryStateBaseIncome + totalTraditionalWithdrawn, primaryState, filingStatus)
+      - calculateStateTax(tax.primaryStateBaseIncome, primaryState, filingStatus)
+    : 0
+  const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
+
+  const postWaterfallTaxes = capitalGainsTax + niit + stateCapitalGainsTax + traditionalIraTax
+  return { capitalGainsTax, niit, stateCapitalGainsTax, traditionalIraTax, postWaterfallTaxes }
+}
+
+function applyAppreciation(ctx: SimContext, primaryAge: number): { equityOverride: number | null } {
+  const { householdAssets, accountBalances, assetRates, marketCrashes, toEffectiveRate } = ctx
+  const equityOverride = getEquityRateOverride(primaryAge, marketCrashes)
+  for (const asset of householdAssets) {
+    const nominalRate = (equityOverride !== null && EQUITY_ASSET_TYPES.has(asset.type))
+      ? equityOverride
+      : assetRates[asset.type]
+    const rate = toEffectiveRate(nominalRate)
+    const balance = accountBalances.get(asset.id) ?? 0
+    accountBalances.set(asset.id, balance * (1 + rate))
+  }
+  return { equityOverride }
+}
+
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
   const { inflationRate, healthcareInflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes, rothConversionTargetBracket } = config
 
@@ -329,33 +747,24 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
   if (!primaryMember) return []
 
   const realMode = config.simulationMode === 'real'
-  /** Convert a nominal annual rate to an effective rate (real-adjusted when in real mode) */
   const toEffectiveRate = (nominal: number) => realMode ? (1 + nominal) / (1 + inflationRate) - 1 : nominal
 
   const currentAge = primaryMember.ageAtSimulationStart
   const simulationEndAge = currentAge + config.simulationYears
-
   const filingStatus: FilingStatus = household.length >= 2 ? 'marriedFilingJointly' : 'single'
   const currentYear = new Date().getFullYear()
   const snapshots: YearlySnapshot[] = []
 
-  // Pre-compute healthcare employer coverage end ages per member
   const employerEndAges = new Map<string, number>()
   for (const member of household) {
     const endAge = resolveEmployerCoverageEndAge(member, household)
     if (endAge !== null) employerEndAges.set(member.id, endAge)
   }
 
-  // MAGI history for IRMAA 2-year lookback (stores per simulation year)
   const magiHistory: number[] = []
-
-  // Track each account balance independently
   const accountBalances = new Map<string, number>(
     householdAssets.map((a) => [a.id, a.balanceAtSimulationStart])
   )
-
-  // Track Roth contribution basis per account (always penalty/tax-free to withdraw at any age)
-  // Uses rothContributionBasis if set; falls back to full balance (legacy / default behavior).
   const rothBasisMap = new Map<string, number>(
     householdAssets
       .filter((a) => a.type === 'retirementRoth')
@@ -363,379 +772,72 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
   )
   const cashAsset = householdAssets.find((a) => a.type === 'cash')
 
+  const ctx: SimContext = {
+    config, household, householdAssets, incomeSources, expenses, assetRates,
+    marketCrashes, inflationRate, healthcareInflationRate, ssCola,
+    rothConversionTargetBracket, filingStatus, realMode, currentAge,
+    simulationEndAge, toEffectiveRate, employerEndAges, accountBalances,
+    rothBasisMap, cashAsset, primaryMember, magiHistory,
+  }
+
   let depleted = false
 
   for (let age = currentAge; age <= simulationEndAge; age++) {
     const yearsElapsed = age - currentAge
-    const year = currentYear + yearsElapsed
-
-
-    // --- Income (tracked per member for state tax purposes) ---
-    // SS income is tracked separately: different growth rate, different tax treatment, no FICA
-    let wageIncome = 0   // all non-SS income (wages + other) — taxable as ordinary income
-    let ssIncome = 0
-    let w2WageIncome = 0 // only actual wages (incomeType === 'wage') — subject to FICA
-    const wageByMember = new Map<string, number>()     // all non-SS income by member (for state tax)
-    const w2WageByMember = new Map<string, number>()   // only W-2 wages by member (for FICA)
-    const incomeBreakdown: IncomeBreakdownItem[] = []
-
-    for (const src of incomeSources) {
-      const member = household.find((m) => m.id === src.memberId)
-      if (!member) continue
-      const memberAge = member.ageAtSimulationStart + yearsElapsed
-      const effectiveEndAge = src.endAge ?? simulationEndAge
-      if (memberAge < src.startAge || memberAge > effectiveEndAge) continue
-      const yearsOfGrowth = memberAge - member.ageAtSimulationStart
-      const isSS = src.incomeType === 'socialSecurity'
-      const growthRate = toEffectiveRate(isSS ? ssCola : src.annualGrowthRate)
-      const amount = src.annualAmount * Math.pow(1 + growthRate, yearsOfGrowth)
-      if (isSS) {
-        ssIncome += amount
-      } else {
-        incomeBreakdown.push({ label: src.name, amount })
-        wageIncome += amount
-        wageByMember.set(src.memberId, (wageByMember.get(src.memberId) ?? 0) + amount)
-        if (src.incomeType === 'wage') {
-          w2WageIncome += amount
-          w2WageByMember.set(src.memberId, (w2WageByMember.get(src.memberId) ?? 0) + amount)
-        }
-      }
-    }
-    if (ssIncome > 0) {
-      incomeBreakdown.push({ label: 'Social Security', amount: ssIncome })
-    }
-
-    // --- Interest income (cash + money market — taxed annually as ordinary income) ---
-    let interestIncome = 0
-    for (const asset of householdAssets) {
-      if (asset.type === 'cash' || asset.type === 'moneyMarketSavings') {
-        const balance = accountBalances.get(asset.id) ?? 0
-        const interest = balance * toEffectiveRate(assetRates[asset.type])
-        if (interest > 0) {
-          interestIncome += interest
-          incomeBreakdown.push({ label: `Interest (${ASSET_TYPE_LABELS[asset.type]})`, amount: interest })
-        }
-      }
-    }
-
-    // --- RMD: forced withdrawal from traditional accounts for members age 73+ ---
-    // RMD reduces traditional balances; proceeds flow into cash via netCashFlow (included in income).
-    // RMD taxes are computed post-waterfall alongside other traditional withdrawal taxes.
-    const rmdWithdrawn = calculateRmd(accountBalances, householdAssets, household, yearsElapsed)
-    if (rmdWithdrawn > 0) {
-      incomeBreakdown.push({ label: 'Required Minimum Distribution', amount: rmdWithdrawn })
-    }
-
-    const income = wageIncome + ssIncome + interestIncome + rmdWithdrawn
-
-    // --- Pre-tax employer healthcare premiums (Section 125 cafeteria plan) ---
-    // Employer-sponsored premiums reduce taxable wages and FICA wages.
-    let preTaxPremiumTotal = 0
-    const preTaxPremiumByMember = new Map<string, number>()
-    for (const member of household) {
-      const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
-      if (!plan.enabled || plan.employerCoverage !== 'own') continue
-      const memberAge = member.ageAtSimulationStart + yearsElapsed
-      const employerEndAge = employerEndAges.get(member.id) ?? memberAge
-      if (memberAge >= employerEndAge) continue
-      const hcInflationRate = toEffectiveRate(healthcareInflationRate)
-      const basePremium = plan.employerPremium * 12
-      const inflatedPremium = basePremium * Math.pow(1 + hcInflationRate, yearsElapsed)
-      // Cap the deduction at the member's actual wages (can't deduct more than you earn)
-      const memberWages = w2WageByMember.get(member.id) ?? 0
-      const deduction = Math.min(inflatedPremium, memberWages)
-      if (deduction > 0) {
-        preTaxPremiumTotal += deduction
-        preTaxPremiumByMember.set(member.id, deduction)
-      }
-    }
-
-    // Reduce wage totals for tax purposes (not for income reporting)
-    const taxableWageIncome = wageIncome - preTaxPremiumTotal
-    const taxableW2WageIncome = w2WageIncome - preTaxPremiumTotal
-
-    // --- Taxes ---
-    // Federal: SS benefits are partially taxable based on provisional income
-    const taxableSs = calculateTaxableSocialSecurity(taxableWageIncome + interestIncome, ssIncome, filingStatus)
-    const federalIncomeTax = calculateFederalTax(taxableWageIncome + interestIncome + taxableSs, filingStatus)
-
-    // FICA: applied only to W-2 wages — not SS, interest, or "other" income
-    let ficaTax = calculateAdditionalMedicare(taxableW2WageIncome, filingStatus)
-    for (const [memberId, memberWages] of w2WageByMember) {
-      const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
-      ficaTax += calculateFicaPerEarner(memberWages - preTaxDeduction)
-    }
-
-    // State tax: aggregate income by state, then compute once per state.
-    // Interest is attributed to the primary member's state.
-    const primaryState = primaryMember.state
-    const incomeByState = new Map<string, number>()
-    for (const [memberId, memberWages] of wageByMember) {
-      const member = household.find((m) => m.id === memberId)!
-      const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
-      incomeByState.set(member.state, (incomeByState.get(member.state) ?? 0) + memberWages - preTaxDeduction)
-    }
-    incomeByState.set(primaryState, (incomeByState.get(primaryState) ?? 0) + interestIncome)
-    let stateIncomeTax = 0
-    for (const [state, stateIncome] of incomeByState) {
-      stateIncomeTax += calculateStateTax(stateIncome, state, filingStatus)
-    }
-    const primaryStateBaseIncome = incomeByState.get(primaryState) ?? 0
-
-    // --- Expenses ---
     const primaryAge = currentAge + yearsElapsed
-    let regularExpenseTotal = 0    // regular + periodic: flows through netCashFlow
-    let educationExpenseTotal = 0  // education: drawn from 529 first, remainder from cash
-    const expenseBreakdown: IncomeBreakdownItem[] = []
 
-    for (const exp of expenses) {
-      const effectiveStart = exp.startAge ?? currentAge
-      if (primaryAge < effectiveStart) continue
-      if (exp.endAge !== undefined && primaryAge > exp.endAge) continue
+    // Phase 1: Income
+    const inc = computeIncome(ctx, yearsElapsed)
 
-      if (exp.expenseType === 'periodic') {
-        const yearsSinceFirst = primaryAge - effectiveStart
-        if (yearsSinceFirst % exp.intervalYears !== 0) continue
-        const inflated = exp.inflationAdjusted
-          ? (realMode ? exp.amount : exp.amount * Math.pow(1 + inflationRate, yearsElapsed))
-          : (realMode ? exp.amount / Math.pow(1 + inflationRate, yearsElapsed) : exp.amount)
-        regularExpenseTotal += inflated
-        expenseBreakdown.push({ label: exp.name, amount: inflated })
-      } else {
-        const annual = exp.frequency === 'monthly' ? exp.amount * 12 : exp.amount
-        const inflated = exp.inflationAdjusted
-          ? (realMode ? annual : annual * Math.pow(1 + inflationRate, yearsElapsed))
-          : (realMode ? annual / Math.pow(1 + inflationRate, yearsElapsed) : annual)
-        if (exp.expenseType === 'education') {
-          educationExpenseTotal += inflated
-        } else {
-          regularExpenseTotal += inflated
-        }
-        expenseBreakdown.push({ label: exp.name, amount: inflated })
-      }
-    }
+    // Phase 2: Initial taxes (federal, FICA, state)
+    const tax = computeInitialTaxes(ctx, yearsElapsed, inc)
 
-    // --- Healthcare expenses (per member, phase-based with healthcare-specific inflation + IRMAA) ---
-    let healthcareExpenseTotal = 0
-    for (const member of household) {
-      const plan = member.healthcarePlan ?? DEFAULT_HEALTHCARE_PLAN
-      if (!plan.enabled) continue
-      const memberAge = member.ageAtSimulationStart + yearsElapsed
-      const employerEndAge = employerEndAges.get(member.id) ?? memberAge
-      const baseCost = getBaseHealthcareCost(plan, memberAge, employerEndAge)
-      if (baseCost <= 0 && memberAge < MEDICARE_AGE) continue
+    // Phase 3: Expenses
+    const exp = computeExpenses(ctx, yearsElapsed, primaryAge)
 
-      // Healthcare inflation: grows at its own rate, not general inflation
-      const hcInflationRate = toEffectiveRate(healthcareInflationRate)
-      const inflatedCost = baseCost * Math.pow(1 + hcInflationRate, yearsElapsed)
+    // Phase 4: Net cash flow → account updates (contributions, 529 draw, Roth conversion, waterfall)
+    const netCashFlow = inc.income - tax.federalIncomeTax - tax.ficaTax - tax.stateIncomeTax - exp.expenseTotal
+    const acct = updateAccounts(ctx, primaryAge, netCashFlow, exp.educationExpenseTotal, exp.regularExpenseTotal, tax.taxableWageIncome, inc.interestIncome, tax.taxableSs, inc.incomeBreakdown)
 
-      // IRMAA surcharge — only once on Medicare (65+ and employer coverage has ended)
-      let irmaaSurcharge = 0
-      if (memberAge >= MEDICARE_AGE && memberAge >= employerEndAge) {
-        const lookbackMagi = magiHistory.length >= 2
-          ? magiHistory[magiHistory.length - 2]
-          : magiHistory.length === 1
-            ? magiHistory[0]
-            : 0
-        irmaaSurcharge = calculateIrmaa(lookbackMagi, filingStatus)
-        // IRMAA is already in nominal terms from the bracket; in real mode, deflate it
-        if (realMode && yearsElapsed > 0) {
-          irmaaSurcharge = irmaaSurcharge / Math.pow(1 + inflationRate, yearsElapsed)
-        }
-      }
-
-      const memberHealthcareCost = inflatedCost + irmaaSurcharge
-      healthcareExpenseTotal += memberHealthcareCost
-      const label = household.length > 1 ? `Healthcare (${member.name || 'Member'})` : 'Healthcare'
-      expenseBreakdown.push({ label, amount: memberHealthcareCost })
-    }
-    regularExpenseTotal += healthcareExpenseTotal
-
-    const expenseTotal = regularExpenseTotal + educationExpenseTotal
-
-    // Net cash flow (income after all taxes and expenses) flows into the cash account
-    const netCashFlow = income - federalIncomeTax - ficaTax - stateIncomeTax - expenseTotal
-
-    // --- Update account balances ---
-    // 1. Contributions: apply the active period's amount for each non-cash account
-    let totalContributions = 0
-    for (const asset of householdAssets) {
-      if (asset.type === 'cash') continue
-      const activePeriod = asset.contributions.find(
-        (c) => primaryAge >= c.startAge && (c.endAge === undefined || primaryAge <= c.endAge)
-      )
-      const contribution = activePeriod?.annualAmount ?? 0
-      if (contribution > 0) {
-        const prev = accountBalances.get(asset.id) ?? 0
-        accountBalances.set(asset.id, prev + contribution)
-        totalContributions += contribution
-        // Track Roth contributions as penalty-free basis
-        if (asset.type === 'retirementRoth') {
-          const prevBasis = rothBasisMap.get(asset.id) ?? 0
-          rothBasisMap.set(asset.id, prevBasis + contribution)
-        }
-      }
-    }
-
-    // 2. Net cash flow (minus contributions) settles into cash
-    if (cashAsset) {
+    // Phase 5: Post-waterfall taxes (capital gains, NIIT, traditional IRA)
+    const pwTax = computePostWaterfallTaxes(ctx, tax, inc, acct)
+    if (cashAsset && pwTax.postWaterfallTaxes > 0) {
       const prev = accountBalances.get(cashAsset.id) ?? 0
-      accountBalances.set(cashAsset.id, prev + netCashFlow - totalContributions)
+      accountBalances.set(cashAsset.id, prev - pwTax.postWaterfallTaxes)
     }
 
-    // 2b. Education draw: 529 accounts reimburse cash for education expenses
-    if (educationExpenseTotal > 0 && cashAsset) {
-      const covered = draw529ForEducation(accountBalances, householdAssets, educationExpenseTotal)
-      if (covered > 0) {
-        const prev = accountBalances.get(cashAsset.id) ?? 0
-        accountBalances.set(cashAsset.id, prev + covered)
-      }
-    }
+    // Phase 6: Apply appreciation
+    const { equityOverride } = applyAppreciation(ctx, primaryAge)
 
-    // 2c. Roth conversion — move traditional → Roth to fill up to target bracket
-    //     Only before RMD age; conversion itself doesn't change cash (only the tax bill does).
-    let rothConverted = 0
-    if (rothConversionTargetBracket !== null && primaryAge < RMD_START_AGE) {
-      const traditionalAccounts = householdAssets.filter((a) => a.type === 'retirementTraditional')
-      const rothAccounts = householdAssets.filter((a) => a.type === 'retirementRoth')
-      const totalTradBalance = traditionalAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
-
-      if (totalTradBalance > 0 && rothAccounts.length > 0) {
-        const baseOrdinary = taxableWageIncome + interestIncome + taxableSs
-        rothConverted = calculateRothConversionAmount(baseOrdinary, totalTradBalance, filingStatus, rothConversionTargetBracket)
-
-        if (rothConverted > 0) {
-          // Withdraw proportionally from traditional accounts
-          for (const acct of traditionalAccounts) {
-            const balance = accountBalances.get(acct.id) ?? 0
-            if (balance <= 0) continue
-            accountBalances.set(acct.id, balance - (balance / totalTradBalance) * rothConverted)
-          }
-          // Deposit proportionally into Roth accounts (by balance; if all zero, put in first)
-          const totalRothBalance = rothAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
-          for (const acct of rothAccounts) {
-            const balance = accountBalances.get(acct.id) ?? 0
-            const share = totalRothBalance > 0 ? balance / totalRothBalance : 1 / rothAccounts.length
-            accountBalances.set(acct.id, balance + share * rothConverted)
-          }
-          incomeBreakdown.push({ label: 'Roth Conversion', amount: rothConverted })
-        }
-      }
-    }
-
-    // 3. Withdrawal waterfall — uses regularExpenseTotal for reserve calculations
-    //    (education costs are handled by 529 draw; including them would inflate reserve targets)
-    let brokerageWithdrawn = 0
-    let traditionalWithdrawn = 0
-    let rothWithdrawn = 0
-    let rothPenaltyFreeWithdrawn = 0
-    if (cashAsset) {
-      ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal, rothBasisMap))
-    }
-
-    // Early withdrawal penalty: 10% on traditional and Roth earnings withdrawn before age 59
-    // Roth contributions can always be withdrawn penalty-free; only earnings are penalized.
-    const EARLY_WITHDRAWAL_AGE = 59
-    const earlyWithdrawalPenalty = primaryAge < EARLY_WITHDRAWAL_AGE
-      ? (traditionalWithdrawn + (rothWithdrawn - rothPenaltyFreeWithdrawn)) * 0.10
-      : 0
-    if (cashAsset && earlyWithdrawalPenalty > 0) {
-      const prev = accountBalances.get(cashAsset.id) ?? 0
-      accountBalances.set(cashAsset.id, prev - earlyWithdrawalPenalty)
-    }
-
-    if (brokerageWithdrawn > 0) {
-      incomeBreakdown.push({ label: 'Capital Gains (Taxable Brokerage)', amount: brokerageWithdrawn })
-    }
-    if (traditionalWithdrawn > 0) {
-      incomeBreakdown.push({ label: 'Traditional IRA Withdrawal', amount: traditionalWithdrawn })
-    }
-
-    // Combine RMD + Roth conversion + waterfall traditional withdrawals for tax purposes
-    const totalTraditionalWithdrawn = rmdWithdrawn + rothConverted + traditionalWithdrawn
-
-    // 3b. Investment taxes: capital gains on brokerage liquidations + NIIT on all NII
-    const baseOrdinaryIncome = taxableWageIncome + interestIncome + taxableSs
-    const capitalGainsTax = calculateCapitalGainsTax(
-      brokerageWithdrawn,
-      baseOrdinaryIncome,
-      filingStatus,
-    )
-    // Traditional IRA distributions (RMD + waterfall) increase MAGI but are not NII themselves.
-    // MAGI uses the original taxableSs here; it will be corrected in the traditionalIraFederalTax step below.
-    const magi = baseOrdinaryIncome + brokerageWithdrawn + totalTraditionalWithdrawn
-    magiHistory.push(magi)
-    const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
-    const stateCapitalGainsTax = brokerageWithdrawn > 0
-      ? calculateStateTax(primaryStateBaseIncome + brokerageWithdrawn, primaryState, filingStatus)
-        - calculateStateTax(primaryStateBaseIncome, primaryState, filingStatus)
-      : 0
-
-    // 3c. Traditional IRA withdrawal — taxed as ordinary income, with SS taxability recalculated
-    // IRA withdrawals increase provisional income, which can push more SS benefits into taxable territory.
-    // Recompute taxable SS with IRA withdrawals included, then take the delta vs. what was already charged.
-    const taxableSsFinal = totalTraditionalWithdrawn > 0
-      ? calculateTaxableSocialSecurity(taxableWageIncome + interestIncome + totalTraditionalWithdrawn, ssIncome, filingStatus)
-      : taxableSs
-    const traditionalIraFederalTax = totalTraditionalWithdrawn > 0
-      ? calculateFederalTax(taxableWageIncome + interestIncome + taxableSsFinal + totalTraditionalWithdrawn, filingStatus)
-        - federalIncomeTax
-      : 0
-    const traditionalIraStateTax = totalTraditionalWithdrawn > 0
-      ? calculateStateTax(primaryStateBaseIncome + totalTraditionalWithdrawn, primaryState, filingStatus)
-        - calculateStateTax(primaryStateBaseIncome, primaryState, filingStatus)
-      : 0
-    const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
-
-    const postWaterfallTaxes = capitalGainsTax + niit + stateCapitalGainsTax + traditionalIraTax
-    // earlyWithdrawalPenalty already deducted from cash above; include in postWaterfallTaxes only for netCashFlow accounting
-    if (cashAsset && postWaterfallTaxes > 0) {
-      const prev = accountBalances.get(cashAsset.id) ?? 0
-      accountBalances.set(cashAsset.id, prev - postWaterfallTaxes)
-    }
-
-    // 4. Apply appreciation to all accounts (equity types use crash override when active)
-    const equityOverride = getEquityRateOverride(primaryAge, marketCrashes)
-    for (const asset of householdAssets) {
-      const nominalRate = (equityOverride !== null && EQUITY_ASSET_TYPES.has(asset.type))
-        ? equityOverride
-        : assetRates[asset.type]
-      const rate = toEffectiveRate(nominalRate)
-      const balance = accountBalances.get(asset.id) ?? 0
-      accountBalances.set(asset.id, balance * (1 + rate))
-    }
-
+    // Build snapshot
     const totalAssets = [...accountBalances.values()].reduce((s, b) => s + b, 0)
-
     if (totalAssets <= 0) {
       depleted = true
       for (const id of accountBalances.keys()) accountBalances.set(id, 0)
     }
 
-    const assetBreakdown: AssetBalance[] = householdAssets.map((a) => ({
-      label: ASSET_TYPE_LABELS[a.type],
-      balance: accountBalances.get(a.id) ?? 0,
-    }))
-
     snapshots.push({
       age,
-      year,
-      income,
-      incomeBreakdown,
-      federalIncomeTax,
-      capitalGainsTax,
-      niit,
-      traditionalIraTax,
-      ficaTax,
-      stateIncomeTax: stateIncomeTax + stateCapitalGainsTax,
-      earlyWithdrawalPenalty,
-      expenses: expenseTotal,
-      expenseBreakdown,
-      netCashFlow: netCashFlow - postWaterfallTaxes - earlyWithdrawalPenalty,
+      year: currentYear + yearsElapsed,
+      income: inc.income,
+      incomeBreakdown: inc.incomeBreakdown,
+      federalIncomeTax: tax.federalIncomeTax,
+      capitalGainsTax: pwTax.capitalGainsTax,
+      niit: pwTax.niit,
+      traditionalIraTax: pwTax.traditionalIraTax,
+      ficaTax: tax.ficaTax,
+      stateIncomeTax: tax.stateIncomeTax + pwTax.stateCapitalGainsTax,
+      earlyWithdrawalPenalty: acct.earlyWithdrawalPenalty,
+      expenses: exp.expenseTotal,
+      expenseBreakdown: exp.expenseBreakdown,
+      netCashFlow: netCashFlow - pwTax.postWaterfallTaxes - acct.earlyWithdrawalPenalty,
       totalAssets: Math.max(0, totalAssets),
-      assetBreakdown,
-      rmdWithdrawn,
-      rothConverted,
+      assetBreakdown: householdAssets.map((a) => ({
+        label: ASSET_TYPE_LABELS[a.type],
+        balance: accountBalances.get(a.id) ?? 0,
+      })),
+      rmdWithdrawn: inc.rmdWithdrawn,
+      rothConverted: acct.rothConverted,
       depleted,
       marketCrashActive: equityOverride !== null,
     })
