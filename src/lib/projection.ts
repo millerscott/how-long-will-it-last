@@ -355,11 +355,11 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
   )
 
   // Track Roth contribution basis per account (always penalty/tax-free to withdraw at any age)
-  // Initialized to the full starting balance — assumed to be 100% contributions.
+  // Uses rothContributionBasis if set; falls back to full balance (legacy / default behavior).
   const rothBasisMap = new Map<string, number>(
     householdAssets
       .filter((a) => a.type === 'retirementRoth')
-      .map((a) => [a.id, a.balanceAtSimulationStart])
+      .map((a) => [a.id, a.rothContributionBasis ?? a.balanceAtSimulationStart])
   )
   const cashAsset = householdAssets.find((a) => a.type === 'cash')
 

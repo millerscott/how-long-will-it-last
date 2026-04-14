@@ -799,6 +799,25 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   </div>
                 </div>
 
+                {/* Roth contribution basis row */}
+                {asset.type === 'retirementRoth' && (
+                  <div className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-3 text-xs text-gray-500">
+                      Contribution basis
+                      <span className="block text-gray-400 font-normal leading-tight">penalty-free to withdraw</span>
+                    </div>
+                    <div className="col-span-3">
+                      <CurrencyInput
+                        value={asset.rothContributionBasis ?? asset.balanceAtSimulationStart}
+                        onChange={(v) => updateAsset(asset.id, { rothContributionBasis: Math.min(v, asset.balanceAtSimulationStart) })}
+                      />
+                    </div>
+                    <div className="col-span-5 text-xs text-gray-400">
+                      Portion of balance from contributions (not earnings). Max: {fmt.format(asset.balanceAtSimulationStart)}.
+                    </div>
+                  </div>
+                )}
+
                 {/* Contribution periods */}
                 <div className="pl-2 border-l-2 border-gray-200 ml-1 space-y-1">
                   <div className="flex items-center justify-between">
