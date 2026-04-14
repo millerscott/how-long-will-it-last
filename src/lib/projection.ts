@@ -83,6 +83,8 @@ export function getEquityRateOverride(
 export interface AssetBalance {
   label: string
   balance: number
+  /** Net human-driven flow this year (contributions − withdrawals, excluding appreciation). */
+  netFlow: number
 }
 
 export interface IncomeBreakdownItem {
@@ -811,6 +813,9 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const yearsElapsed = age - currentAge
     const primaryAge = currentAge + yearsElapsed
 
+    // Capture start-of-year balances for net flow calculation
+    const startBalances = new Map(accountBalances)
+
     // Phase 1: Income
     const inc = computeIncome(ctx, yearsElapsed)
 
@@ -830,6 +835,9 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       const prev = accountBalances.get(cashAsset.id) ?? 0
       accountBalances.set(cashAsset.id, prev - pwTax.postWaterfallTaxes)
     }
+
+    // Capture pre-appreciation balances to compute human-driven net flow per account
+    const preAppreciationBalances = new Map(accountBalances)
 
     // Phase 6: Apply appreciation
     const { equityOverride } = applyAppreciation(ctx, primaryAge)
@@ -861,6 +869,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       assetBreakdown: householdAssets.map((a) => ({
         label: ASSET_TYPE_LABELS[a.type],
         balance: accountBalances.get(a.id) ?? 0,
+        netFlow: (preAppreciationBalances.get(a.id) ?? 0) - (startBalances.get(a.id) ?? 0),
       })),
       rmdWithdrawn: inc.rmdWithdrawn,
       rothConverted: acct.rothConverted,

@@ -214,7 +214,23 @@ export default function ProjectionTable({ snapshots }: Props) {
           ) : (
             <>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Asset Breakdown</p>
-              <BreakdownRows rows={activeSnapshot.assetBreakdown.map((a) => ({ label: a.label, value: a.balance }))} />
+              <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1 text-sm">
+                <span className="text-xs text-gray-400">Account</span>
+                <span className="text-xs text-gray-400 text-right">Balance</span>
+                <span className="text-xs text-gray-400 text-right">Net Flow</span>
+                {activeSnapshot.assetBreakdown.map((a) => (
+                  <>
+                    <span key={a.label + '-label'} className="text-gray-500">{a.label}</span>
+                    <span key={a.label + '-balance'} className="font-medium tabular-nums text-right">{fmt.format(a.balance)}</span>
+                    <span
+                      key={a.label + '-flow'}
+                      className={`font-medium tabular-nums text-right ${a.netFlow > 0 ? 'text-green-600' : a.netFlow < 0 ? 'text-red-600' : 'text-gray-400'}`}
+                    >
+                      {a.netFlow === 0 ? '—' : (a.netFlow > 0 ? '+' : '') + fmt.format(a.netFlow)}
+                    </span>
+                  </>
+                ))}
+              </div>
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>
                 <span>{fmt.format(activeSnapshot.totalAssets)}</span>
