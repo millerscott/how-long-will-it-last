@@ -466,25 +466,21 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       ficaTax += calculateFicaPerEarner(memberWages - preTaxDeduction)
     }
 
-    // State tax: Oregon does not tax SS benefits — pass wage income + interest
-    const statesWithIncome = new Set(
-      [...wageByMember.keys()].map((id) => household.find((m) => m.id === id)!.state)
-    )
-    // Interest is attributed to the primary member's state
+    // State tax: aggregate income by state, then compute once per state.
+    // Interest is attributed to the primary member's state.
     const primaryState = primaryMember.state
-    let stateIncomeTax = 0
-    if (statesWithIncome.size === 1) {
-      const state = [...statesWithIncome][0]
-      stateIncomeTax = calculateStateTax(taxableWageIncome + interestIncome, state, filingStatus)
-    } else {
-      for (const [memberId, memberWages] of wageByMember) {
-        const member = household.find((m) => m.id === memberId)!
-        const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
-        stateIncomeTax += calculateStateTax(memberWages - preTaxDeduction, member.state, filingStatus)
-      }
-      // Add interest income to primary member's state
-      stateIncomeTax += calculateStateTax(interestIncome, primaryState, filingStatus)
+    const incomeByState = new Map<string, number>()
+    for (const [memberId, memberWages] of wageByMember) {
+      const member = household.find((m) => m.id === memberId)!
+      const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
+      incomeByState.set(member.state, (incomeByState.get(member.state) ?? 0) + memberWages - preTaxDeduction)
     }
+    incomeByState.set(primaryState, (incomeByState.get(primaryState) ?? 0) + interestIncome)
+    let stateIncomeTax = 0
+    for (const [state, stateIncome] of incomeByState) {
+      stateIncomeTax += calculateStateTax(stateIncome, state, filingStatus)
+    }
+    const primaryStateBaseIncome = incomeByState.get(primaryState) ?? 0
 
     // --- Expenses ---
     const primaryAge = currentAge + yearsElapsed
@@ -671,8 +667,8 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     magiHistory.push(magi)
     const niit = calculateNiit(interestIncome + brokerageWithdrawn, magi, filingStatus)
     const stateCapitalGainsTax = brokerageWithdrawn > 0
-      ? calculateStateTax(taxableWageIncome + interestIncome + brokerageWithdrawn, primaryState, filingStatus)
-        - calculateStateTax(taxableWageIncome + interestIncome, primaryState, filingStatus)
+      ? calculateStateTax(primaryStateBaseIncome + brokerageWithdrawn, primaryState, filingStatus)
+        - calculateStateTax(primaryStateBaseIncome, primaryState, filingStatus)
       : 0
 
     // 3c. Traditional IRA withdrawal — taxed as ordinary income, with SS taxability recalculated
@@ -685,10 +681,9 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       ? calculateFederalTax(taxableWageIncome + interestIncome + taxableSsFinal + totalTraditionalWithdrawn, filingStatus)
         - federalIncomeTax
       : 0
-    const baseStateIncome = taxableWageIncome + interestIncome
     const traditionalIraStateTax = totalTraditionalWithdrawn > 0
-      ? calculateStateTax(baseStateIncome + totalTraditionalWithdrawn, primaryState, filingStatus)
-        - calculateStateTax(baseStateIncome, primaryState, filingStatus)
+      ? calculateStateTax(primaryStateBaseIncome + totalTraditionalWithdrawn, primaryState, filingStatus)
+        - calculateStateTax(primaryStateBaseIncome, primaryState, filingStatus)
       : 0
     const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
 
