@@ -79,6 +79,7 @@ export interface YearlySnapshot {
   traditionalIraTax: number
   ficaTax: number
   stateIncomeTax: number
+  totalTax: number
   expenses: number
   expenseBreakdown: IncomeBreakdownItem[]
   netCashFlow: number
@@ -827,6 +828,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       traditionalIraTax: pwTax.traditionalIraTax,
       ficaTax: tax.ficaTax,
       stateIncomeTax: tax.stateIncomeTax + pwTax.stateCapitalGainsTax,
+      totalTax: tax.federalIncomeTax + pwTax.capitalGainsTax + pwTax.niit + pwTax.traditionalIraTax + tax.ficaTax + tax.stateIncomeTax + pwTax.stateCapitalGainsTax + acct.earlyWithdrawalPenalty,
       earlyWithdrawalPenalty: acct.earlyWithdrawalPenalty,
       expenses: exp.expenseTotal,
       expenseBreakdown: exp.expenseBreakdown,
