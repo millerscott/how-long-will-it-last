@@ -605,7 +605,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       const totalTradBalance = traditionalAccounts.reduce((s, a) => s + (accountBalances.get(a.id) ?? 0), 0)
 
       if (totalTradBalance > 0 && rothAccounts.length > 0) {
-        const baseOrdinary = wageIncome + interestIncome + taxableSs
+        const baseOrdinary = taxableWageIncome + interestIncome + taxableSs
         rothConverted = calculateRothConversionAmount(baseOrdinary, totalTradBalance, filingStatus, rothConversionTargetBracket)
 
         if (rothConverted > 0) {
