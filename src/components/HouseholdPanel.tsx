@@ -334,7 +334,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   <div className="grid grid-cols-12 gap-2 px-1 mb-1">
                     <span className="col-span-2 text-xs text-gray-400">Type</span>
                     <span className="col-span-3 text-xs text-gray-400">Name</span>
-                    <span className="col-span-3 text-xs text-gray-400">Annual Amount</span>
+                    <span className="col-span-3 text-xs text-gray-400">Annual Amount <span className="text-gray-300">(today's $)</span></span>
                     <span className="col-span-1 text-xs text-gray-400">Annual Growth</span>
                     <span className="col-span-1 text-xs text-gray-400">Start Age</span>
                     <span className="col-span-1 text-xs text-gray-400">End Age</span>
