@@ -107,7 +107,8 @@ export function applyWaterfall(
   householdAssets: AppConfig['householdAssets'],
   primaryAge: number,
   annualExpenses = 0,
-): { brokerageWithdrawn: number; traditionalWithdrawn: number; rothWithdrawn: number } {
+  rothBasisMap?: Map<string, number>,
+): { brokerageWithdrawn: number; traditionalWithdrawn: number; rothWithdrawn: number; rothPenaltyFreeWithdrawn: number } {
   const monthlyExpense = annualExpenses / 12
 
   // Compute reserve targets
@@ -129,7 +130,7 @@ export function applyWaterfall(
   }
 
   const totalPullNeeded = cashShortfall + mmTopUpTotal
-  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0 }
+  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0, rothPenaltyFreeWithdrawn: 0 }
 
   const order: AssetType[] = primaryAge < 60
     ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
@@ -139,6 +140,7 @@ export function applyWaterfall(
   let brokerageWithdrawn = 0
   let traditionalWithdrawn = 0
   let rothWithdrawn = 0
+  let rothPenaltyFreeWithdrawn = 0
 
   for (const assetType of order) {
     if (remaining <= 0) break
@@ -153,7 +155,19 @@ export function applyWaterfall(
       accountBalances.set(asset.id, balance - withdrawal)
       if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
       if (assetType === 'retirementTraditional') traditionalWithdrawn += withdrawal
-      if (assetType === 'retirementRoth') rothWithdrawn += withdrawal
+      if (assetType === 'retirementRoth') {
+        rothWithdrawn += withdrawal
+        // Roth contributions can always be withdrawn penalty-free; only earnings are penalized
+        if (rothBasisMap) {
+          const basis = rothBasisMap.get(asset.id) ?? 0
+          const fromBasis = Math.min(withdrawal, basis)
+          rothBasisMap.set(asset.id, basis - fromBasis)
+          rothPenaltyFreeWithdrawn += fromBasis
+        } else {
+          // No basis tracking — treat entire withdrawal as penalty-free (conservative for test/legacy callers)
+          rothPenaltyFreeWithdrawn += withdrawal
+        }
+      }
       remaining -= withdrawal
     }
   }
@@ -175,7 +189,7 @@ export function applyWaterfall(
     accountBalances.set(cashAssetId, cashNow - transfer)
   }
 
-  return { brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn }
+  return { brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn }
 }
 
 /**
@@ -338,6 +352,14 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
   // Track each account balance independently
   const accountBalances = new Map<string, number>(
     householdAssets.map((a) => [a.id, a.balanceAtSimulationStart])
+  )
+
+  // Track Roth contribution basis per account (always penalty/tax-free to withdraw at any age)
+  // Initialized to the full starting balance — assumed to be 100% contributions.
+  const rothBasisMap = new Map<string, number>(
+    householdAssets
+      .filter((a) => a.type === 'retirementRoth')
+      .map((a) => [a.id, a.balanceAtSimulationStart])
   )
   const cashAsset = householdAssets.find((a) => a.type === 'cash')
 
@@ -551,6 +573,11 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
         const prev = accountBalances.get(asset.id) ?? 0
         accountBalances.set(asset.id, prev + contribution)
         totalContributions += contribution
+        // Track Roth contributions as penalty-free basis
+        if (asset.type === 'retirementRoth') {
+          const prevBasis = rothBasisMap.get(asset.id) ?? 0
+          rothBasisMap.set(asset.id, prevBasis + contribution)
+        }
       }
     }
 
@@ -605,15 +632,16 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     let brokerageWithdrawn = 0
     let traditionalWithdrawn = 0
     let rothWithdrawn = 0
+    let rothPenaltyFreeWithdrawn = 0
     if (cashAsset) {
-      ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal))
+      ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal, rothBasisMap))
     }
 
-    // Early withdrawal penalty: 10% on traditional and Roth withdrawals before age 59
-    // (IRS rule: distributions before 59½ trigger the penalty; we use age < 59 in annual modeling)
+    // Early withdrawal penalty: 10% on traditional and Roth earnings withdrawn before age 59
+    // Roth contributions can always be withdrawn penalty-free; only earnings are penalized.
     const EARLY_WITHDRAWAL_AGE = 59
     const earlyWithdrawalPenalty = primaryAge < EARLY_WITHDRAWAL_AGE
-      ? (traditionalWithdrawn + rothWithdrawn) * 0.10
+      ? (traditionalWithdrawn + (rothWithdrawn - rothPenaltyFreeWithdrawn)) * 0.10
       : 0
     if (cashAsset && earlyWithdrawalPenalty > 0) {
       const prev = accountBalances.get(cashAsset.id) ?? 0
