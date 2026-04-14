@@ -82,6 +82,7 @@ export function getEquityRateOverride(
 
 export interface AssetBalance {
   label: string
+  startBalance: number
   balance: number
   /** Net human-driven flow this year (contributions − withdrawals, excluding appreciation). */
   netFlow: number
@@ -866,11 +867,17 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       expenseBreakdown: exp.expenseBreakdown,
       netCashFlow: netCashFlow - pwTax.postWaterfallTaxes - acct.earlyWithdrawalPenalty,
       totalAssets: Math.max(0, totalAssets),
-      assetBreakdown: householdAssets.map((a) => ({
-        label: ASSET_TYPE_LABELS[a.type],
-        balance: accountBalances.get(a.id) ?? 0,
-        netFlow: (preAppreciationBalances.get(a.id) ?? 0) - (startBalances.get(a.id) ?? 0),
-      })),
+      assetBreakdown: householdAssets.map((a) => {
+        const startBalance = startBalances.get(a.id) ?? 0
+        const endBalance = accountBalances.get(a.id) ?? 0
+        const netFlow = (preAppreciationBalances.get(a.id) ?? 0) - startBalance
+        return {
+          label: ASSET_TYPE_LABELS[a.type],
+          startBalance,
+          balance: endBalance,
+          netFlow,
+        }
+      }),
       rmdWithdrawn: inc.rmdWithdrawn,
       rothConverted: acct.rothConverted,
       depleted,

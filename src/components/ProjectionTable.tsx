@@ -170,7 +170,7 @@ export default function ProjectionTable({ snapshots }: Props) {
             top: popover.top - window.scrollY + 6,
             ...(popover.left !== undefined ? { left: popover.left } : { right: popover.right }),
           }}
-          className="z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-3 min-w-48 text-sm"
+          className="z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-3 min-w-48 text-sm max-w-lg"
         >
           {popover.type === 'income' ? (
             <>
@@ -214,22 +214,34 @@ export default function ProjectionTable({ snapshots }: Props) {
           ) : (
             <>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Asset Breakdown</p>
-              <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-1 text-sm">
+              <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1 text-sm min-w-0">
                 <span className="text-xs text-gray-400">Account</span>
-                <span className="text-xs text-gray-400 text-right">Balance</span>
-                <span className="text-xs text-gray-400 text-right">Net Flow</span>
-                {activeSnapshot.assetBreakdown.map((a) => (
-                  <>
-                    <span key={a.label + '-label'} className="text-gray-500">{a.label}</span>
-                    <span key={a.label + '-balance'} className="font-medium tabular-nums text-right">{fmt.format(a.balance)}</span>
-                    <span
-                      key={a.label + '-flow'}
-                      className={`font-medium tabular-nums text-right ${a.netFlow > 0 ? 'text-green-600' : a.netFlow < 0 ? 'text-red-600' : 'text-gray-400'}`}
-                    >
-                      {a.netFlow === 0 ? '—' : (a.netFlow > 0 ? '+' : '') + fmt.format(a.netFlow)}
-                    </span>
-                  </>
-                ))}
+                <span className="text-xs text-gray-400 text-right">Start</span>
+                <span className="text-xs text-gray-400 text-right">Flow</span>
+                <span className="text-xs text-gray-400 text-right">Growth</span>
+                <span className="text-xs text-gray-400 text-right">End</span>
+                {activeSnapshot.assetBreakdown.map((a) => {
+                  const appreciation = a.balance - a.startBalance - a.netFlow
+                  return (
+                    <>
+                      <span key={a.label + '-label'} className="text-gray-500 truncate">{a.label}</span>
+                      <span key={a.label + '-start'} className="font-medium tabular-nums text-right text-gray-500">{fmt.format(a.startBalance)}</span>
+                      <span
+                        key={a.label + '-flow'}
+                        className={`font-medium tabular-nums text-right ${a.netFlow > 0 ? 'text-green-600' : a.netFlow < 0 ? 'text-red-600' : 'text-gray-300'}`}
+                      >
+                        {a.netFlow === 0 ? '—' : (a.netFlow > 0 ? '+' : '') + fmt.format(a.netFlow)}
+                      </span>
+                      <span
+                        key={a.label + '-growth'}
+                        className={`font-medium tabular-nums text-right ${appreciation > 0 ? 'text-green-600' : appreciation < 0 ? 'text-red-600' : 'text-gray-300'}`}
+                      >
+                        {Math.round(appreciation) === 0 ? '—' : (appreciation > 0 ? '+' : '') + fmt.format(appreciation)}
+                      </span>
+                      <span key={a.label + '-end'} className="font-medium tabular-nums text-right">{fmt.format(a.balance)}</span>
+                    </>
+                  )
+                })}
               </div>
               <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
                 <span>Total</span>
