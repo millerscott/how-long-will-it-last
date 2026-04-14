@@ -38,6 +38,23 @@ const EQUITY_ASSET_TYPES = new Set<AssetType>([
   'educationSavings529',
 ])
 
+interface CrashRates {
+  crashRate: number
+  recoveryRate: number
+  crashEnd: number
+  recoveryEnd: number
+}
+
+/** Pre-compute crash/recovery rates so Math.pow is called once per crash, not once per year. */
+export function precomputeCrashRates(marketCrashes: AppConfig['marketCrashes']): CrashRates[] {
+  return marketCrashes.map((crash) => ({
+    crashRate: Math.pow(1 - crash.declinePercent, 1 / crash.durationYears) - 1,
+    recoveryRate: Math.pow(1 / (1 - crash.declinePercent), 1 / crash.recoveryYears) - 1,
+    crashEnd: crash.startAge + crash.durationYears,
+    recoveryEnd: crash.startAge + crash.durationYears + crash.recoveryYears,
+  }))
+}
+
 /**
  * Returns the effective annual rate override for equity assets at the given age,
  * based on any active market crash or recovery period.
@@ -47,15 +64,17 @@ const EQUITY_ASSET_TYPES = new Set<AssetType>([
 export function getEquityRateOverride(
   age: number,
   marketCrashes: AppConfig['marketCrashes'],
+  crashRatesCache?: CrashRates[],
 ): number | null {
-  for (const crash of marketCrashes) {
-    const crashEnd = crash.startAge + crash.durationYears
-    const recoveryEnd = crashEnd + crash.recoveryYears
-    if (age >= crash.startAge && age < crashEnd) {
-      return Math.pow(1 - crash.declinePercent, 1 / crash.durationYears) - 1
+  const rates = crashRatesCache ?? precomputeCrashRates(marketCrashes)
+  for (let i = 0; i < marketCrashes.length; i++) {
+    const crash = marketCrashes[i]
+    const r = rates[i]
+    if (age >= crash.startAge && age < r.crashEnd) {
+      return r.crashRate
     }
-    if (age >= crashEnd && age < recoveryEnd) {
-      return Math.pow(1 / (1 - crash.declinePercent), 1 / crash.recoveryYears) - 1
+    if (age >= r.crashEnd && age < r.recoveryEnd) {
+      return r.recoveryRate
     }
   }
   return null
@@ -351,6 +370,7 @@ interface SimContext {
   cashAsset: AppConfig['householdAssets'][number] | undefined
   primaryMember: HouseholdMember
   magiHistory: number[]
+  crashRatesCache: CrashRates[]
 }
 
 interface IncomeResult {
@@ -732,7 +752,7 @@ function computePostWaterfallTaxes(
 
 function applyAppreciation(ctx: SimContext, primaryAge: number): { equityOverride: number | null } {
   const { householdAssets, accountBalances, assetRates, marketCrashes, toEffectiveRate } = ctx
-  const equityOverride = getEquityRateOverride(primaryAge, marketCrashes)
+  const equityOverride = getEquityRateOverride(primaryAge, marketCrashes, ctx.crashRatesCache)
   for (const asset of householdAssets) {
     const nominalRate = (equityOverride !== null && EQUITY_ASSET_TYPES.has(asset.type))
       ? equityOverride
@@ -782,6 +802,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     rothConversionTargetBracket, filingStatus, realMode, currentAge,
     simulationEndAge, toEffectiveRate, employerEndAges, accountBalances,
     rothBasisMap, cashAsset, primaryMember, magiHistory,
+    crashRatesCache: precomputeCrashRates(marketCrashes),
   }
 
   let depleted = false
