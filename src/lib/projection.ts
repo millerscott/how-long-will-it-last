@@ -27,6 +27,9 @@ const RMD_DIVISORS: Record<number, number> = {
 
 const RMD_START_AGE = 73
 const EARLY_WITHDRAWAL_AGE = 59
+const EARLY_WITHDRAWAL_PENALTY_RATE = 0.10
+/** Age at which waterfall switches from Roth-before-Traditional to Traditional-before-Roth */
+const WATERFALL_AGE_THRESHOLD = 60
 
 const EQUITY_ASSET_TYPES = new Set<AssetType>([
   'taxableBrokerage',
@@ -134,7 +137,7 @@ export function applyWaterfall(
   const totalPullNeeded = cashShortfall + mmTopUpTotal
   if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0, rothPenaltyFreeWithdrawn: 0 }
 
-  const order: AssetType[] = primaryAge < 60
+  const order: AssetType[] = primaryAge < WATERFALL_AGE_THRESHOLD
     ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
     : ['moneyMarketSavings', 'taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529']
 
@@ -662,7 +665,7 @@ function updateAccounts(
 
   // Early withdrawal penalty: 10% on traditional and Roth earnings withdrawn before age 59
   const earlyWithdrawalPenalty = primaryAge < EARLY_WITHDRAWAL_AGE
-    ? (traditionalWithdrawn + (rothWithdrawn - rothPenaltyFreeWithdrawn)) * 0.10
+    ? (traditionalWithdrawn + (rothWithdrawn - rothPenaltyFreeWithdrawn)) * EARLY_WITHDRAWAL_PENALTY_RATE
     : 0
   if (cashAsset && earlyWithdrawalPenalty > 0) {
     const prev = accountBalances.get(cashAsset.id) ?? 0
