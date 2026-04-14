@@ -11,6 +11,19 @@ interface Props {
   onChange: (config: AppConfig) => void
 }
 
+function hasOverlappingContributions(contributions: ContributionPeriod[]): boolean {
+  for (let i = 0; i < contributions.length; i++) {
+    for (let j = i + 1; j < contributions.length; j++) {
+      const a = contributions[i]
+      const b = contributions[j]
+      const aEnd = a.endAge ?? Infinity
+      const bEnd = b.endAge ?? Infinity
+      if (a.startAge <= bEnd && b.startAge <= aEnd) return true
+    }
+  }
+  return false
+}
+
 function uid() {
   return Math.random().toString(36).slice(2)
 }
@@ -884,6 +897,10 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                       </button>
                     </div>
                   ))}
+
+                  {asset.contributions.length >= 2 && hasOverlappingContributions(asset.contributions) && (
+                    <p className="text-xs text-amber-600 mt-1">⚠ Contribution periods overlap — both will apply during overlapping years.</p>
+                  )}
                 </div>
               </div>
               )
