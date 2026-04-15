@@ -121,19 +121,19 @@ export interface YearlySnapshot {
 /**
  * Withdrawal waterfall: if cash is negative, draw from other accounts in tax-optimal order.
  *
- * Type-level order:
- *   Before age 60: Roth before Traditional (both carry early-withdrawal penalty, but Roth
- *   withdrawals are otherwise tax-free). At 60+: Traditional before Roth (preserve
- *   tax-free Roth growth longer, no early-withdrawal penalty).
+ * Draw order before age 60 (with basis tracking):
+ *   MM → Brokerage → Roth contributions (basis, always penalty-free)
+ *   → Traditional → Roth earnings (penalized, preserve tax-free growth) → 529
  *
- * Within retirement account types (Traditional and Roth), accounts are sorted by owner age
- * when memberAgeMap is provided:
- *   1. Accounts owned by members >= 59 come first (no early-withdrawal penalty).
- *   2. Among penalized accounts, youngest member's accounts come first — this preserves
- *      the older member's balance so it can be accessed penalty-free once they turn 59.
+ * Draw order at age 60+:
+ *   MM → Brokerage → Traditional → Roth → 529
  *
- * Returns the amounts withdrawn from each account type plus the total penalty-bearing
- * withdrawal amount so the caller can compute taxes and the 10% penalty.
+ * Within retirement account types, accounts are sorted by owner age when memberAgeMap is
+ * provided: penalty-free owners (age >= 59) first; among penalized owners, youngest first
+ * so the older member's balance is preserved until they reach penalty-free age.
+ *
+ * Returns the amounts withdrawn from each account type plus penaltyBearingWithdrawn (the
+ * portion subject to the 10% early-withdrawal penalty) so the caller can compute taxes.
  *
  * Mutates accountBalances in place.
  */
@@ -170,9 +170,44 @@ export function applyWaterfall(
   const totalPullNeeded = cashShortfall + mmTopUpTotal
   if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0, rothPenaltyFreeWithdrawn: 0, penaltyBearingWithdrawn: 0 }
 
-  const order: AssetType[] = primaryAge < WATERFALL_AGE_THRESHOLD
-    ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
-    : ['moneyMarketSavings', 'taxableBrokerage', 'retirementTraditional', 'retirementRoth', 'educationSavings529']
+  // DrawPass describes one step in the waterfall. Roth accounts can appear twice when basis
+  // tracking is active: first drawing only from penalty-free contributions (basisOnly), then
+  // — after Traditional — drawing from taxable earnings (earningsOnly). This preserves the
+  // most valuable tax-free Roth growth until all other sources are exhausted.
+  interface DrawPass { assetType: AssetType; basisOnly?: true; earningsOnly?: true }
+
+  let drawPasses: DrawPass[]
+  if (primaryAge >= WATERFALL_AGE_THRESHOLD) {
+    // 60+: no early-withdrawal penalty; preserve Roth by drawing Traditional first.
+    drawPasses = [
+      { assetType: 'moneyMarketSavings' },
+      { assetType: 'taxableBrokerage' },
+      { assetType: 'retirementTraditional' },
+      { assetType: 'retirementRoth' },
+      { assetType: 'educationSavings529' },
+    ]
+  } else if (rothBasisMap) {
+    // Under 60 with basis tracking: draw Roth contributions first (always penalty-free),
+    // then Traditional (penalty + tax, but will be taxed eventually anyway), then Roth
+    // earnings as a last resort (penalty but tax-free; most valuable asset to preserve).
+    drawPasses = [
+      { assetType: 'moneyMarketSavings' },
+      { assetType: 'taxableBrokerage' },
+      { assetType: 'retirementRoth', basisOnly: true },
+      { assetType: 'retirementTraditional' },
+      { assetType: 'retirementRoth', earningsOnly: true },
+      { assetType: 'educationSavings529' },
+    ]
+  } else {
+    // Under 60 without basis tracking (legacy / test callers): original Roth-before-Traditional.
+    drawPasses = [
+      { assetType: 'moneyMarketSavings' },
+      { assetType: 'taxableBrokerage' },
+      { assetType: 'retirementRoth' },
+      { assetType: 'retirementTraditional' },
+      { assetType: 'educationSavings529' },
+    ]
+  }
 
   let remaining = totalPullNeeded
   let brokerageWithdrawn = 0
@@ -181,15 +216,15 @@ export function applyWaterfall(
   let rothPenaltyFreeWithdrawn = 0
   let penaltyBearingWithdrawn = 0
 
-  for (const assetType of order) {
+  for (const pass of drawPasses) {
     if (remaining <= 0) break
 
     // For retirement account types, sort by owner age to minimize early-withdrawal penalties:
     // penalty-free owners (age >= 59) first, then youngest-first among those still under 59
     // so the older penalized member's balance is preserved until they turn 59.
-    let accountsOfType = householdAssets.filter((a) => a.type === assetType)
+    let accountsOfType = householdAssets.filter((a) => a.type === pass.assetType)
     if (
-      (assetType === 'retirementTraditional' || assetType === 'retirementRoth') &&
+      (pass.assetType === 'retirementTraditional' || pass.assetType === 'retirementRoth') &&
       memberAgeMap && primaryMemberId && accountsOfType.length > 1
     ) {
       accountsOfType = [...accountsOfType].sort((a, b) => {
@@ -208,12 +243,26 @@ export function applyWaterfall(
       const balance = accountBalances.get(asset.id) ?? 0
       // MM accounts with a reserve are only drainable above their floor; all other accounts are fully drainable
       const floor = mmTargetMap.get(asset.id) ?? 0
-      const drainable = Math.max(0, balance - floor)
+      let drainable = Math.max(0, balance - floor)
+
+      // For split Roth passes, restrict what can be drawn from this account
+      if (pass.assetType === 'retirementRoth' && rothBasisMap) {
+        const basis = rothBasisMap.get(asset.id) ?? 0
+        if (pass.basisOnly) {
+          // Only draw up to the penalty-free contribution basis
+          drainable = Math.min(drainable, basis)
+        } else if (pass.earningsOnly) {
+          // Only draw the portion above the remaining basis (the taxable earnings)
+          drainable = Math.max(0, drainable - basis)
+        }
+      }
+
       if (drainable <= 0) continue
       const withdrawal = Math.min(drainable, remaining)
       accountBalances.set(asset.id, balance - withdrawal)
-      if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
-      if (assetType === 'retirementTraditional') {
+
+      if (pass.assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
+      if (pass.assetType === 'retirementTraditional') {
         traditionalWithdrawn += withdrawal
         // Penalty applies if the account owner is under 59
         const ownerAge = memberAgeMap && primaryMemberId
@@ -221,13 +270,19 @@ export function applyWaterfall(
           : primaryAge
         if (ownerAge < EARLY_WITHDRAWAL_AGE) penaltyBearingWithdrawn += withdrawal
       }
-      if (assetType === 'retirementRoth') {
+      if (pass.assetType === 'retirementRoth') {
         rothWithdrawn += withdrawal
-        // Roth contributions can always be withdrawn penalty-free; only earnings are penalized
         if (rothBasisMap) {
-          const basis = rothBasisMap.get(asset.id) ?? 0
-          const fromBasis = Math.min(withdrawal, basis)
-          rothBasisMap.set(asset.id, basis - fromBasis)
+          let fromBasis: number
+          if (pass.earningsOnly) {
+            // Drawing only earnings — basis is not consumed (it's protected by the drainable limit above)
+            fromBasis = 0
+          } else {
+            // basisOnly or unrestricted pass — consume basis as normal
+            const basis = rothBasisMap.get(asset.id) ?? 0
+            fromBasis = Math.min(withdrawal, basis)
+            rothBasisMap.set(asset.id, basis - fromBasis)
+          }
           rothPenaltyFreeWithdrawn += fromBasis
           // Roth earnings are penalized if the account owner is under 59
           const ownerAge = memberAgeMap && primaryMemberId
