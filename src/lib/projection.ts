@@ -490,8 +490,11 @@ function computeInitialTaxes(
     }
   }
 
-  const taxableWageIncome = inc.wageIncome - preTaxPremiumTotal
-  const taxableW2WageIncome = inc.w2WageIncome - preTaxPremiumTotal
+  // Pre-tax premiums reduce W-2 wages only (Section 125 cafeteria plan).
+  // Non-W-2 'other' income is unaffected. Math.max guards against a
+  // deduction that somehow exceeds the W-2 wage base.
+  const taxableW2WageIncome = Math.max(0, inc.w2WageIncome - preTaxPremiumTotal)
+  const taxableWageIncome = taxableW2WageIncome + (inc.wageIncome - inc.w2WageIncome)
 
   // Federal tax
   const taxableSs = calculateTaxableSocialSecurity(taxableWageIncome + inc.interestIncome, inc.ssIncome, filingStatus)
