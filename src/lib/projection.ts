@@ -122,8 +122,8 @@ export interface YearlySnapshot {
  * Withdrawal waterfall: if cash is negative, draw from other accounts in tax-optimal order.
  *
  * Draw order before age 60 (with basis tracking):
- *   MM → Brokerage → Roth contributions (basis, always penalty-free)
- *   → Traditional → Roth earnings (penalized, preserve tax-free growth) → 529
+ *   MM → Brokerage → Roth (basis only, always penalty-free)
+ *   → Traditional → Roth (unrestricted; basis consumed in first pass) → 529
  *
  * Draw order at age 60+:
  *   MM → Brokerage → Traditional → Roth → 529
@@ -170,11 +170,11 @@ export function applyWaterfall(
   const totalPullNeeded = cashShortfall + mmTopUpTotal
   if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0, rothPenaltyFreeWithdrawn: 0, penaltyBearingWithdrawn: 0 }
 
-  // DrawPass describes one step in the waterfall. Roth accounts can appear twice when basis
-  // tracking is active: first drawing only from penalty-free contributions (basisOnly), then
-  // — after Traditional — drawing from taxable earnings (earningsOnly). This preserves the
-  // most valuable tax-free Roth growth until all other sources are exhausted.
-  interface DrawPass { assetType: AssetType; basisOnly?: true; earningsOnly?: true }
+  // DrawPass describes one step in the waterfall. When basis tracking is active, Roth
+  // accounts appear twice before age 60: first capped to the contribution basis (penalty-free),
+  // then unrestricted after Traditional — by that point the basis has already been consumed
+  // so the second pass effectively burns down earnings as a last resort.
+  interface DrawPass { assetType: AssetType; basisOnly?: true }
 
   let drawPasses: DrawPass[]
   if (primaryAge >= WATERFALL_AGE_THRESHOLD) {
@@ -189,13 +189,14 @@ export function applyWaterfall(
   } else if (rothBasisMap) {
     // Under 60 with basis tracking: draw Roth contributions first (always penalty-free),
     // then Traditional (penalty + tax, but will be taxed eventually anyway), then Roth
-    // earnings as a last resort (penalty but tax-free; most valuable asset to preserve).
+    // without restriction as a last resort (basis is already gone; normal tracking handles
+    // any residual basis correctly).
     drawPasses = [
       { assetType: 'moneyMarketSavings' },
       { assetType: 'taxableBrokerage' },
       { assetType: 'retirementRoth', basisOnly: true },
       { assetType: 'retirementTraditional' },
-      { assetType: 'retirementRoth', earningsOnly: true },
+      { assetType: 'retirementRoth' },
       { assetType: 'educationSavings529' },
     ]
   } else {
@@ -245,16 +246,9 @@ export function applyWaterfall(
       const floor = mmTargetMap.get(asset.id) ?? 0
       let drainable = Math.max(0, balance - floor)
 
-      // For split Roth passes, restrict what can be drawn from this account
-      if (pass.assetType === 'retirementRoth' && rothBasisMap) {
-        const basis = rothBasisMap.get(asset.id) ?? 0
-        if (pass.basisOnly) {
-          // Only draw up to the penalty-free contribution basis
-          drainable = Math.min(drainable, basis)
-        } else if (pass.earningsOnly) {
-          // Only draw the portion above the remaining basis (the taxable earnings)
-          drainable = Math.max(0, drainable - basis)
-        }
+      // For the basisOnly Roth pass, cap drainable to the contribution basis
+      if (pass.basisOnly && pass.assetType === 'retirementRoth' && rothBasisMap) {
+        drainable = Math.min(drainable, rothBasisMap.get(asset.id) ?? 0)
       }
 
       if (drainable <= 0) continue
@@ -273,16 +267,9 @@ export function applyWaterfall(
       if (pass.assetType === 'retirementRoth') {
         rothWithdrawn += withdrawal
         if (rothBasisMap) {
-          let fromBasis: number
-          if (pass.earningsOnly) {
-            // Drawing only earnings — basis is not consumed (it's protected by the drainable limit above)
-            fromBasis = 0
-          } else {
-            // basisOnly or unrestricted pass — consume basis as normal
-            const basis = rothBasisMap.get(asset.id) ?? 0
-            fromBasis = Math.min(withdrawal, basis)
-            rothBasisMap.set(asset.id, basis - fromBasis)
-          }
+          const basis = rothBasisMap.get(asset.id) ?? 0
+          const fromBasis = Math.min(withdrawal, basis)
+          rothBasisMap.set(asset.id, basis - fromBasis)
           rothPenaltyFreeWithdrawn += fromBasis
           // Roth earnings are penalized if the account owner is under 59
           const ownerAge = memberAgeMap && primaryMemberId
