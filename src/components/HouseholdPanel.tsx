@@ -534,11 +534,15 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                                 type="number"
                                 className="input text-xs w-16"
                                 placeholder={String(member.retirementAge)}
+                                title={`Leave blank to default to retirement age (${member.retirementAge}). This value updates automatically when you change retirement age.`}
                                 value={plan.employerCoverageEndAge ?? ''}
                                 onChange={(e) => updateHealthcarePlan(member.id, {
                                   employerCoverageEndAge: e.target.value === '' ? undefined : parseInt(e.target.value) || undefined,
                                 })}
                               />
+                              <span className="text-xs text-gray-400" title={`Leave blank to use retirement age (${member.retirementAge})`}>
+                                (blank = ret. age)
+                              </span>
                             </div>
                           )}
                           {isCoveredByOther && coveringMember && (
