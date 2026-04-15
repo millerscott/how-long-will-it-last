@@ -813,7 +813,6 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
 
   for (let age = currentAge; age <= simulationEndAge; age++) {
     const yearsElapsed = age - currentAge
-    const primaryAge = currentAge + yearsElapsed
 
     // Capture start-of-year balances for net flow calculation
     const startBalances = new Map(accountBalances)
@@ -825,11 +824,11 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const tax = computeInitialTaxes(ctx, yearsElapsed, inc)
 
     // Phase 3: Expenses
-    const exp = computeExpenses(ctx, yearsElapsed, primaryAge)
+    const exp = computeExpenses(ctx, yearsElapsed, age)
 
     // Phase 4: Net cash flow → account updates (contributions, 529 draw, Roth conversion, waterfall)
     const netCashFlow = inc.income - tax.federalIncomeTax - tax.ficaTax - tax.stateIncomeTax - exp.expenseTotal
-    const acct = updateAccounts(ctx, primaryAge, netCashFlow, exp.educationExpenseTotal, exp.regularExpenseTotal, tax.taxableWageIncome, inc.interestIncome, tax.taxableSs, inc.incomeBreakdown)
+    const acct = updateAccounts(ctx, age, netCashFlow, exp.educationExpenseTotal, exp.regularExpenseTotal, tax.taxableWageIncome, inc.interestIncome, tax.taxableSs, inc.incomeBreakdown)
 
     // Phase 5: Post-waterfall taxes (capital gains, NIIT, traditional IRA)
     const pwTax = computePostWaterfallTaxes(ctx, tax, inc, acct)
@@ -842,7 +841,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const preAppreciationBalances = new Map(accountBalances)
 
     // Phase 6: Apply appreciation
-    const { equityOverride } = applyAppreciation(ctx, primaryAge)
+    const { equityOverride } = applyAppreciation(ctx, age)
 
     // Build snapshot
     const totalAssets = [...accountBalances.values()].reduce((s, b) => s + b, 0)
