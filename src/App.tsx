@@ -37,6 +37,7 @@ function makeId(): string {
 function createSampleConfig(): AppConfig {
   const alexId = makeId()
   const jordanId = makeId()
+  const brokerageId = makeId()
 
   return {
     ...DEFAULT_CONFIG,
@@ -60,14 +61,16 @@ function createSampleConfig(): AppConfig {
       {
         id: makeId(), type: 'cash',
         balanceAtSimulationStart: 20_000, contributions: [], monthsReserve: 3,
+        maxMonthsReserve: 6, sweepToAssetId: brokerageId,
       },
       {
         id: makeId(), type: 'moneyMarketSavings',
         balanceAtSimulationStart: 35_000, monthsReserve: 2,
+        maxMonthsReserve: 6, sweepToAssetId: brokerageId,
         contributions: [],
       },
       {
-        id: makeId(), type: 'taxableBrokerage',
+        id: brokerageId, type: 'taxableBrokerage',
         balanceAtSimulationStart: 45_000,
         contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 6_000 }],
       },
