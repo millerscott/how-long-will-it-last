@@ -350,7 +350,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     <span className="col-span-3 text-xs text-gray-400">Annual Amount <span className="text-gray-300">(today's $)</span></span>
                     <span className="col-span-1 text-xs text-gray-400">Annual Growth</span>
                     <span className="col-span-1 text-xs text-gray-400">Start Age</span>
-                    <span className="col-span-1 text-xs text-gray-400">End Age</span>
+                    <span className="col-span-1 text-xs text-gray-400" title="Income is paid through this age (inclusive)">Last Age (incl.)</span>
                     <span className="col-span-1" />
                   </div>
                 )}
@@ -431,6 +431,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                             disabled={isSS}
                             className={`input w-full ${isSS ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''} ${!isSS && src.endAge !== undefined && src.endAge < src.startAge ? 'border-red-400 focus:ring-red-400' : ''}`}
                             placeholder={isSS ? 'N/A' : String(member.retirementAge)}
+                            title={isSS ? undefined : 'Income is paid through this age (inclusive). Blank = retirement age.'}
                             value={src.endAge ?? ''}
                             onChange={(e) => {
                               const val = e.target.value
@@ -858,7 +859,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   {asset.contributions.length > 0 && (
                     <div className="grid grid-cols-12 gap-2 px-1">
                       <span className="col-span-2 text-xs text-gray-400">Start Age</span>
-                      <span className="col-span-2 text-xs text-gray-400">End Age</span>
+                      <span className="col-span-2 text-xs text-gray-400" title="Contributions are made through this age (inclusive)">Last Age (incl.)</span>
                       <span className="col-span-2 text-xs text-gray-400">Annual Amount</span>
                       <span className="col-span-1" />
                     </div>
@@ -950,7 +951,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                 <span className="col-span-1 text-xs text-gray-400">Amount</span>
                 <span className="col-span-2 text-xs text-gray-400">Freq / Every</span>
                 <span className="col-span-1 text-xs text-gray-400">Start</span>
-                <span className="col-span-1 text-xs text-gray-400">End</span>
+                <span className="col-span-1 text-xs text-gray-400" title="Expense continues through this age (inclusive)">End (incl.)</span>
                 <span className="col-span-2 text-xs text-gray-400">Inflation Adjusted?</span>
                 <span className="col-span-1" />
               </div>
