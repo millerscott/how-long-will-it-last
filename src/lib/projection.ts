@@ -82,6 +82,7 @@ export function getEquityRateOverride(
 
 export interface AssetBalance {
   label: string
+  type: AssetType
   startBalance: number
   balance: number
   /** Net human-driven flow this year (contributions − withdrawals, excluding appreciation). */
@@ -873,6 +874,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
         const netFlow = (preAppreciationBalances.get(a.id) ?? 0) - startBalance
         return {
           label: ASSET_TYPE_LABELS[a.type],
+          type: a.type,
           startBalance,
           balance: endBalance,
           netFlow,

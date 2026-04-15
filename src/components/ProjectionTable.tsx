@@ -1,5 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import type { YearlySnapshot } from '../lib/projection'
+import type { AssetType } from '../types'
+
+const ASSET_SHORT_LABELS: Record<AssetType, string> = {
+  cash: 'Cash',
+  moneyMarketSavings: 'Money Market',
+  taxableBrokerage: 'Brokerage',
+  retirementTraditional: 'Traditional IRA',
+  retirementRoth: 'Roth IRA',
+  educationSavings529: '529 Plan',
+}
 
 interface Props {
   snapshots: YearlySnapshot[]
@@ -224,7 +234,7 @@ export default function ProjectionTable({ snapshots }: Props) {
                   const appreciation = a.balance - a.startBalance - a.netFlow
                   return (
                     <>
-                      <span key={a.label + '-label'} className="text-gray-500 truncate">{a.label}</span>
+                      <span key={a.label + '-label'} className="text-gray-500">{ASSET_SHORT_LABELS[a.type]}</span>
                       <span key={a.label + '-start'} className="font-medium tabular-nums text-right text-gray-500">{fmt.format(a.startBalance)}</span>
                       <span
                         key={a.label + '-flow'}
