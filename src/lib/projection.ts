@@ -120,12 +120,20 @@ export interface YearlySnapshot {
 
 /**
  * Withdrawal waterfall: if cash is negative, draw from other accounts in tax-optimal order.
- * Before age 60: Roth before Traditional (both carry early-withdrawal penalty, but Roth
- * withdrawals are otherwise tax-free). At 60+: Traditional before Roth (preserve
- * tax-free Roth growth longer, no early-withdrawal penalty).
  *
- * Returns the amounts withdrawn from taxable brokerage and traditional retirement accounts
- * so the caller can compute the appropriate taxes post-waterfall.
+ * Type-level order:
+ *   Before age 60: Roth before Traditional (both carry early-withdrawal penalty, but Roth
+ *   withdrawals are otherwise tax-free). At 60+: Traditional before Roth (preserve
+ *   tax-free Roth growth longer, no early-withdrawal penalty).
+ *
+ * Within retirement account types (Traditional and Roth), accounts are sorted by owner age
+ * when memberAgeMap is provided:
+ *   1. Accounts owned by members >= 59 come first (no early-withdrawal penalty).
+ *   2. Among penalized accounts, youngest member's accounts come first — this preserves
+ *      the older member's balance so it can be accessed penalty-free once they turn 59.
+ *
+ * Returns the amounts withdrawn from each account type plus the total penalty-bearing
+ * withdrawal amount so the caller can compute taxes and the 10% penalty.
  *
  * Mutates accountBalances in place.
  */
@@ -136,7 +144,9 @@ export function applyWaterfall(
   primaryAge: number,
   annualExpenses = 0,
   rothBasisMap?: Map<string, number>,
-): { brokerageWithdrawn: number; traditionalWithdrawn: number; rothWithdrawn: number; rothPenaltyFreeWithdrawn: number } {
+  memberAgeMap?: Map<string, number>,
+  primaryMemberId?: string,
+): { brokerageWithdrawn: number; traditionalWithdrawn: number; rothWithdrawn: number; rothPenaltyFreeWithdrawn: number; penaltyBearingWithdrawn: number } {
   const monthlyExpense = annualExpenses / 12
 
   // Compute reserve targets
@@ -158,7 +168,7 @@ export function applyWaterfall(
   }
 
   const totalPullNeeded = cashShortfall + mmTopUpTotal
-  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0, rothPenaltyFreeWithdrawn: 0 }
+  if (totalPullNeeded <= 0) return { brokerageWithdrawn: 0, traditionalWithdrawn: 0, rothWithdrawn: 0, rothPenaltyFreeWithdrawn: 0, penaltyBearingWithdrawn: 0 }
 
   const order: AssetType[] = primaryAge < WATERFALL_AGE_THRESHOLD
     ? ['moneyMarketSavings', 'taxableBrokerage', 'retirementRoth', 'retirementTraditional', 'educationSavings529']
@@ -169,10 +179,31 @@ export function applyWaterfall(
   let traditionalWithdrawn = 0
   let rothWithdrawn = 0
   let rothPenaltyFreeWithdrawn = 0
+  let penaltyBearingWithdrawn = 0
 
   for (const assetType of order) {
     if (remaining <= 0) break
-    for (const asset of householdAssets.filter((a) => a.type === assetType)) {
+
+    // For retirement account types, sort by owner age to minimize early-withdrawal penalties:
+    // penalty-free owners (age >= 59) first, then youngest-first among those still under 59
+    // so the older penalized member's balance is preserved until they turn 59.
+    let accountsOfType = householdAssets.filter((a) => a.type === assetType)
+    if (
+      (assetType === 'retirementTraditional' || assetType === 'retirementRoth') &&
+      memberAgeMap && primaryMemberId && accountsOfType.length > 1
+    ) {
+      accountsOfType = [...accountsOfType].sort((a, b) => {
+        const ageA = memberAgeMap.get(a.memberId ?? primaryMemberId) ?? primaryAge
+        const ageB = memberAgeMap.get(b.memberId ?? primaryMemberId) ?? primaryAge
+        const freeA = ageA >= EARLY_WITHDRAWAL_AGE
+        const freeB = ageB >= EARLY_WITHDRAWAL_AGE
+        if (freeA !== freeB) return freeA ? -1 : 1   // penalty-free accounts drawn first
+        if (!freeA && !freeB) return ageA - ageB      // both penalized: youngest first
+        return 0
+      })
+    }
+
+    for (const asset of accountsOfType) {
       if (remaining <= 0) break
       const balance = accountBalances.get(asset.id) ?? 0
       // MM accounts with a reserve are only drainable above their floor; all other accounts are fully drainable
@@ -182,7 +213,14 @@ export function applyWaterfall(
       const withdrawal = Math.min(drainable, remaining)
       accountBalances.set(asset.id, balance - withdrawal)
       if (assetType === 'taxableBrokerage') brokerageWithdrawn += withdrawal
-      if (assetType === 'retirementTraditional') traditionalWithdrawn += withdrawal
+      if (assetType === 'retirementTraditional') {
+        traditionalWithdrawn += withdrawal
+        // Penalty applies if the account owner is under 59
+        const ownerAge = memberAgeMap && primaryMemberId
+          ? (memberAgeMap.get(asset.memberId ?? primaryMemberId) ?? primaryAge)
+          : primaryAge
+        if (ownerAge < EARLY_WITHDRAWAL_AGE) penaltyBearingWithdrawn += withdrawal
+      }
       if (assetType === 'retirementRoth') {
         rothWithdrawn += withdrawal
         // Roth contributions can always be withdrawn penalty-free; only earnings are penalized
@@ -191,6 +229,11 @@ export function applyWaterfall(
           const fromBasis = Math.min(withdrawal, basis)
           rothBasisMap.set(asset.id, basis - fromBasis)
           rothPenaltyFreeWithdrawn += fromBasis
+          // Roth earnings are penalized if the account owner is under 59
+          const ownerAge = memberAgeMap && primaryMemberId
+            ? (memberAgeMap.get(asset.memberId ?? primaryMemberId) ?? primaryAge)
+            : primaryAge
+          if (ownerAge < EARLY_WITHDRAWAL_AGE) penaltyBearingWithdrawn += withdrawal - fromBasis
         } else {
           // No basis tracking — treat entire withdrawal as penalty-free (conservative for test/legacy callers)
           rothPenaltyFreeWithdrawn += withdrawal
@@ -217,7 +260,7 @@ export function applyWaterfall(
     accountBalances.set(cashAssetId, cashNow - transfer)
   }
 
-  return { brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn }
+  return { brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn, penaltyBearingWithdrawn }
 }
 
 /**
@@ -685,18 +728,29 @@ function updateAccounts(
   }
 
   // 3. Withdrawal waterfall
+  // Build a per-member age map so the waterfall can prefer penalty-free accounts
+  // (members >= 59) and, among penalized accounts, draw from the youngest member first
+  // (preserving the older member's balance until they reach penalty-free age).
+  const yearsElapsed = primaryAge - ctx.currentAge
+  const memberAgeMap = new Map<string, number>()
+  for (const member of ctx.household) {
+    memberAgeMap.set(member.id, member.ageAtSimulationStart + yearsElapsed)
+  }
+  const primaryMemberId = ctx.household[0]?.id
+
   let brokerageWithdrawn = 0
   let traditionalWithdrawn = 0
   let rothWithdrawn = 0
   let rothPenaltyFreeWithdrawn = 0
+  let penaltyBearingWithdrawn = 0
   if (cashAsset) {
-    ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn } = applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal, rothBasisMap))
+    ;({ brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn, penaltyBearingWithdrawn } =
+      applyWaterfall(accountBalances, cashAsset.id, householdAssets, primaryAge, regularExpenseTotal, rothBasisMap, memberAgeMap, primaryMemberId))
   }
 
-  // Early withdrawal penalty: 10% on traditional and Roth earnings withdrawn before age 59
-  const earlyWithdrawalPenalty = primaryAge < EARLY_WITHDRAWAL_AGE
-    ? (traditionalWithdrawn + (rothWithdrawn - rothPenaltyFreeWithdrawn)) * EARLY_WITHDRAWAL_PENALTY_RATE
-    : 0
+  // Early withdrawal penalty: 10% on the portion of retirement withdrawals whose
+  // account owner is under age 59 (tracked per-account by applyWaterfall).
+  const earlyWithdrawalPenalty = penaltyBearingWithdrawn * EARLY_WITHDRAWAL_PENALTY_RATE
   if (cashAsset && earlyWithdrawalPenalty > 0) {
     const prev = accountBalances.get(cashAsset.id) ?? 0
     accountBalances.set(cashAsset.id, prev - earlyWithdrawalPenalty)
