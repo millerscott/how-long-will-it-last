@@ -143,6 +143,8 @@ function mergeWithDefaults(rawConfig: AppConfig): AppConfig {
 
 export { mergeWithDefaults }
 
+const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+
 export default function App() {
   const [store, setStore] = useLocalStorage<SimulationStore>(STORE_KEY, createDefaultStore())
   const [tab, setTab] = useLocalStorage<Tab>('hlwil-tab', 'household')
@@ -266,7 +268,6 @@ export default function App() {
   const snapshots = useMemo(() => projectFinances(config), [config])
   const depletionAge = findDepletionAge(snapshots)
 
-  const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
   const startAssets = config.householdAssets.reduce((s, a) => s + a.balanceAtSimulationStart, 0)
   const assets20 = snapshots[20]?.totalAssets ?? null
   const assets40 = snapshots[40]?.totalAssets ?? null
