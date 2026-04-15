@@ -550,12 +550,15 @@ interface InitialTaxResult {
   stateIncomeTax: number
   primaryStateBaseIncome: number
   preTaxPremiumByMember: Map<string, number>
+  /** Traditional retirement contribution deduction applied this year (above-the-line) */
+  traditionalDeduction: number
 }
 
 function computeInitialTaxes(
   ctx: SimContext,
   yearsElapsed: number,
   inc: IncomeResult,
+  traditionalContribution: number = 0,
 ): InitialTaxResult {
   const { household, filingStatus, toEffectiveRate, healthcareInflationRate, employerEndAges, primaryMember } = ctx
 
@@ -585,11 +588,18 @@ function computeInitialTaxes(
   const taxableW2WageIncome = Math.max(0, inc.w2WageIncome - preTaxPremiumTotal)
   const taxableWageIncome = taxableW2WageIncome + (inc.wageIncome - inc.w2WageIncome)
 
-  // Federal tax
-  const taxableSs = calculateTaxableSocialSecurity(taxableWageIncome + inc.interestIncome, inc.ssIncome, filingStatus)
-  const federalIncomeTax = calculateFederalTax(taxableWageIncome + inc.interestIncome + taxableSs, filingStatus)
+  // Traditional retirement contributions are tax-deductible above the line
+  // (models 401k/IRA deductibility; we trust the user to enter deductible amounts only).
+  // Capped at total ordinary income so we never create a negative tax base.
+  // Note: FICA is NOT reduced — traditional IRA contributions don't affect FICA.
+  const traditionalDeduction = Math.min(traditionalContribution, taxableWageIncome + inc.interestIncome)
+  const deductedOrdinaryIncome = taxableWageIncome + inc.interestIncome - traditionalDeduction
 
-  // FICA
+  // Federal tax
+  const taxableSs = calculateTaxableSocialSecurity(deductedOrdinaryIncome, inc.ssIncome, filingStatus)
+  const federalIncomeTax = calculateFederalTax(deductedOrdinaryIncome + taxableSs, filingStatus)
+
+  // FICA (unaffected by traditional contribution deduction)
   let ficaTax = calculateAdditionalMedicare(taxableW2WageIncome, filingStatus)
   for (const [memberId, memberWages] of inc.w2WageByMember) {
     const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
@@ -605,13 +615,16 @@ function computeInitialTaxes(
     incomeByState.set(member.state, (incomeByState.get(member.state) ?? 0) + memberWages - preTaxDeduction)
   }
   incomeByState.set(primaryState, (incomeByState.get(primaryState) ?? 0) + inc.interestIncome)
+  // Apply traditional contribution deduction to primary state (above-the-line)
+  const primaryStateIncome = incomeByState.get(primaryState) ?? 0
+  incomeByState.set(primaryState, Math.max(0, primaryStateIncome - traditionalDeduction))
   let stateIncomeTax = 0
   for (const [state, stateIncome] of incomeByState) {
     stateIncomeTax += calculateStateTax(stateIncome, state, filingStatus)
   }
   const primaryStateBaseIncome = incomeByState.get(primaryState) ?? 0
 
-  return { taxableWageIncome, taxableW2WageIncome, taxableSs, federalIncomeTax, ficaTax, stateIncomeTax, primaryStateBaseIncome, preTaxPremiumByMember }
+  return { taxableWageIncome, taxableW2WageIncome, taxableSs, federalIncomeTax, ficaTax, stateIncomeTax, primaryStateBaseIncome, preTaxPremiumByMember, traditionalDeduction }
 }
 
 interface ExpenseResult {
@@ -839,7 +852,9 @@ function computePostWaterfallTaxes(
   const { filingStatus, primaryMember, magiHistory } = ctx
 
   const totalTraditionalWithdrawn = inc.rmdWithdrawn + acct.rothConverted + acct.traditionalWithdrawn
-  const baseOrdinaryIncome = tax.taxableWageIncome + inc.interestIncome + tax.taxableSs
+  // Subtract traditional contribution deduction so capital gains brackets, NIIT, and
+  // IRA tax deltas are computed against the correct reduced ordinary income base.
+  const baseOrdinaryIncome = tax.taxableWageIncome + inc.interestIncome - tax.traditionalDeduction + tax.taxableSs
 
   const capitalGainsTax = calculateCapitalGainsTax(acct.brokerageWithdrawn, baseOrdinaryIncome, filingStatus)
 
@@ -938,8 +953,19 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     // Phase 1: Income
     const inc = computeIncome(ctx, yearsElapsed)
 
+    // Pre-compute traditional retirement contributions for tax deduction (above-the-line).
+    // Done here so the amount is available before Phase 2 taxes are calculated.
+    const traditionalContribution = householdAssets
+      .filter((a) => a.type === 'retirementTraditional')
+      .reduce((sum, asset) => {
+        const activePeriod = asset.contributions.find(
+          (c) => age >= c.startAge && (c.endAge === undefined || age <= c.endAge)
+        )
+        return sum + (activePeriod?.annualAmount ?? 0)
+      }, 0)
+
     // Phase 2: Initial taxes (federal, FICA, state)
-    const tax = computeInitialTaxes(ctx, yearsElapsed, inc)
+    const tax = computeInitialTaxes(ctx, yearsElapsed, inc, traditionalContribution)
 
     // Phase 3: Expenses
     const exp = computeExpenses(ctx, yearsElapsed, age)
