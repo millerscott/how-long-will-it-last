@@ -243,10 +243,24 @@ export default function ProjectionTable({ snapshots }: Props) {
                   )
                 })}
               </div>
-              <div className="border-t border-gray-100 mt-2 pt-2 flex justify-between font-semibold">
-                <span>Total</span>
-                <span>{fmt.format(activeSnapshot.totalAssets)}</span>
-              </div>
+              {(() => {
+                const totStart = activeSnapshot.assetBreakdown.reduce((s, a) => s + a.startBalance, 0)
+                const totFlow = activeSnapshot.assetBreakdown.reduce((s, a) => s + a.netFlow, 0)
+                const totGrowth = activeSnapshot.assetBreakdown.reduce((s, a) => s + (a.balance - a.startBalance - a.netFlow), 0)
+                return (
+                  <div className="border-t border-gray-100 mt-2 pt-2 grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 font-semibold text-sm">
+                    <span>Total</span>
+                    <span className="tabular-nums text-right text-gray-500">{fmt.format(totStart)}</span>
+                    <span className={`tabular-nums text-right ${totFlow > 0 ? 'text-green-600' : totFlow < 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                      {totFlow === 0 ? '—' : (totFlow > 0 ? '+' : '') + fmt.format(totFlow)}
+                    </span>
+                    <span className={`tabular-nums text-right ${totGrowth > 0 ? 'text-green-600' : totGrowth < 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                      {Math.round(totGrowth) === 0 ? '—' : (totGrowth > 0 ? '+' : '') + fmt.format(totGrowth)}
+                    </span>
+                    <span className="tabular-nums text-right">{fmt.format(activeSnapshot.totalAssets)}</span>
+                  </div>
+                )
+              })()}
             </>
           )}
         </div>
