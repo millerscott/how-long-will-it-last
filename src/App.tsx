@@ -34,14 +34,81 @@ function makeId(): string {
   return crypto.randomUUID()
 }
 
+function createSampleConfig(): AppConfig {
+  const alexId = makeId()
+  const jordanId = makeId()
+
+  return {
+    ...DEFAULT_CONFIG,
+    household: [
+      { id: alexId,   name: 'Alex',   ageAtSimulationStart: 40, retirementAge: 65, state: 'OR' },
+      { id: jordanId, name: 'Jordan', ageAtSimulationStart: 38, retirementAge: 65, state: 'OR' },
+    ],
+    incomeSources: [
+      { id: makeId(), memberId: alexId,   name: "Alex's Salary",          incomeType: 'wage'          as const, startAge: 40, annualAmount: 100_000, annualGrowthRate: 0.03, endAge: 65 },
+      { id: makeId(), memberId: jordanId, name: "Jordan's Salary",         incomeType: 'wage'          as const, startAge: 38, annualAmount:  75_000, annualGrowthRate: 0.03, endAge: 65 },
+      { id: makeId(), memberId: alexId,   name: "Alex's Social Security",  incomeType: 'socialSecurity' as const, startAge: 67, annualAmount:  28_000, annualGrowthRate: 0 },
+      { id: makeId(), memberId: jordanId, name: "Jordan's Social Security", incomeType: 'socialSecurity' as const, startAge: 67, annualAmount:  21_000, annualGrowthRate: 0 },
+    ],
+    householdAssets: [
+      {
+        id: makeId(), type: 'cash',
+        balanceAtSimulationStart: 20_000, contributions: [], monthsReserve: 3,
+      },
+      {
+        id: makeId(), type: 'moneyMarketSavings',
+        balanceAtSimulationStart: 35_000, monthsReserve: 2,
+        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 3_600 }],
+      },
+      {
+        id: makeId(), type: 'taxableBrokerage',
+        balanceAtSimulationStart: 45_000,
+        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 6_000 }],
+      },
+      {
+        id: makeId(), type: 'retirementTraditional', memberId: alexId,
+        balanceAtSimulationStart: 120_000,
+        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 7_000 }],
+      },
+      {
+        id: makeId(), type: 'retirementRoth', memberId: jordanId,
+        balanceAtSimulationStart: 65_000, rothContributionBasis: 65_000,
+        contributions: [{ id: makeId(), startAge: 38, endAge: 65, annualAmount: 7_000 }],
+      },
+      {
+        id: makeId(), type: 'educationSavings529',
+        balanceAtSimulationStart: 18_000,
+        contributions: [{ id: makeId(), startAge: 40, endAge: 55, annualAmount: 3_600 }],
+      },
+    ],
+    expenses: [
+      {
+        id: makeId(), name: 'Monthly Living Expenses',
+        expenseType: 'regular' as const, frequency: 'monthly' as const,
+        amount: 4_200, inflationAdjusted: true,
+      },
+      {
+        id: makeId(), name: 'Home Renovation',
+        expenseType: 'periodic' as const, intervalYears: 7,
+        amount: 20_000, inflationAdjusted: false,
+      },
+      {
+        id: makeId(), name: 'College Tuition',
+        expenseType: 'education' as const, frequency: 'annual' as const,
+        amount: 20_000, inflationAdjusted: true, startAge: 55, endAge: 58,
+      },
+    ],
+  }
+}
+
 function createDefaultStore(): SimulationStore {
   const id = makeId()
   return {
     activeId: id,
     simulations: [{
       id,
-      name: 'My Simulation',
-      config: DEFAULT_CONFIG,
+      name: 'Sample Household',
+      config: createSampleConfig(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }],
