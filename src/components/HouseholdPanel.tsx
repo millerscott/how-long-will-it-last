@@ -746,31 +746,39 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     {(() => {
                       const brokerageAccounts = config.householdAssets.filter((a) => a.type === 'taxableBrokerage')
                       if (brokerageAccounts.length === 0) return null
+                      const minVal = cashAsset.monthsReserve ?? 0
+                      const maxVal = cashAsset.maxMonthsReserve
+                      const invalid = maxVal !== undefined && maxVal <= minVal
                       return (
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            placeholder="∞"
-                            className="input text-sm w-full"
-                            value={cashAsset.maxMonthsReserve ?? ''}
-                            onChange={(e) => updateAsset(cashAsset.id, {
-                              maxMonthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
-                            })}
-                          />
-                          <span className="text-xs text-gray-400 shrink-0">mo. max →</span>
-                          <select
-                            className="input text-xs w-full"
-                            value={cashAsset.sweepToAssetId ?? ''}
-                            onChange={(e) => updateAsset(cashAsset.id, { sweepToAssetId: e.target.value || undefined })}
-                          >
-                            <option value="">pick account</option>
-                            {brokerageAccounts.map((a) => (
-                              <option key={a.id} value={a.id}>Brokerage</option>
-                            ))}
-                          </select>
-                        </div>
+                        <>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="∞"
+                              className={`input text-sm w-full ${invalid ? 'border-red-400' : ''}`}
+                              value={cashAsset.maxMonthsReserve ?? ''}
+                              onChange={(e) => updateAsset(cashAsset.id, {
+                                maxMonthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
+                              })}
+                            />
+                            <span className="text-xs text-gray-400 shrink-0">mo. max →</span>
+                            <select
+                              className="input text-xs w-full"
+                              value={cashAsset.sweepToAssetId ?? ''}
+                              onChange={(e) => updateAsset(cashAsset.id, { sweepToAssetId: e.target.value || undefined })}
+                            >
+                              <option value="">pick account</option>
+                              {brokerageAccounts.map((a) => (
+                                <option key={a.id} value={a.id}>Brokerage</option>
+                              ))}
+                            </select>
+                          </div>
+                          {invalid && (
+                            <span className="text-xs text-red-500">Max must be greater than min ({minVal} mo.)</span>
+                          )}
+                        </>
                       )
                     })()}
                   </div>
@@ -826,14 +834,18 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                       {(() => {
                         const brokerageAccounts = config.householdAssets.filter((a) => a.type === 'taxableBrokerage')
                         if (brokerageAccounts.length === 0) return null
+                        const minVal = asset.monthsReserve ?? 0
+                        const maxVal = asset.maxMonthsReserve
+                        const invalid = maxVal !== undefined && maxVal <= minVal
                         return (
+                          <>
                           <div className="flex items-center gap-1 mt-0.5">
                             <input
                               type="number"
                               min="0"
                               step="1"
                               placeholder="∞"
-                              className="input text-sm w-full"
+                              className={`input text-sm w-full ${invalid ? 'border-red-400' : ''}`}
                               value={asset.maxMonthsReserve ?? ''}
                               onChange={(e) => updateAsset(asset.id, {
                                 maxMonthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
@@ -851,6 +863,10 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                               ))}
                             </select>
                           </div>
+                          {invalid && (
+                            <span className="text-xs text-red-500">Max must be greater than min ({minVal} mo.)</span>
+                          )}
+                          </>
                         )
                       })()}
                     </div>
