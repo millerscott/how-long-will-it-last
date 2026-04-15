@@ -18,6 +18,7 @@ Everything runs in the browser. No accounts, no servers, no data leaves your mac
 - Per-account contribution schedules with multiple age-range periods
 - Configurable appreciation rates per account type
 - Cash and money market reserve targets (in months of expenses) that the system automatically maintains
+- Optional sweep ceiling per cash/MM account: excess above a configurable maximum (in months of expenses) is automatically moved to a designated taxable brokerage account each year
 - Roth contribution basis tracking for accurate early withdrawal modeling
 
 ### Expense Management

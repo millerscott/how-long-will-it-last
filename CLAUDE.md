@@ -51,9 +51,11 @@ src/
   - `EducationExpense`: `{ expenseType: 'education', frequency: 'monthly'|'annual', startAge?, endAge?, ... }` — draws from 529 accounts first
   - `startAge` and `endAge` are both **inclusive**
 - `AssetType`: `'cash' | 'moneyMarketSavings' | 'taxableBrokerage' | 'retirementTraditional' | 'retirementRoth' | 'educationSavings529'`
-- `HouseholdAsset`: `{ id, type, memberId?, balanceAtSimulationStart, contributions: ContributionPeriod[], monthsReserve?, rothContributionBasis? }`
+- `HouseholdAsset`: `{ id, type, memberId?, balanceAtSimulationStart, contributions: ContributionPeriod[], monthsReserve?, maxMonthsReserve?, sweepToAssetId?, rothContributionBasis? }`
   - `ContributionPeriod`: `{ id, startAge, endAge?, annualAmount }` — multiple periods per asset; endAge is inclusive
   - `monthsReserve`: cash and MM only; waterfall tops up to this level before drawing from investments
+  - `maxMonthsReserve`: cash and MM only; if balance exceeds this ceiling (months of expenses), excess is swept to `sweepToAssetId`
+  - `sweepToAssetId`: ID of a `taxableBrokerage` account to receive sweep overflow; sweep is silently skipped if target is missing or not a brokerage account
   - `memberId`: links retirement accounts to a specific household member (for RMDs); unlinked = primary member
   - `rothContributionBasis`: Roth IRA only; tracks penalty-free withdrawal basis
 - `AssetRates`: one rate (decimal) per `AssetType`
@@ -188,6 +190,13 @@ Each year captures `startBalances` (beginning of year) and `preAppreciationBalan
 - After pulling, cash distributes to MM reserve accounts up to their targets
 - `annualExpenses` passed to waterfall excludes education expenses (covered by 529 draw separately)
 
+## Cash/MM sweep
+- Runs at the end of `updateAccounts`, after the waterfall and early withdrawal penalty have settled
+- For each cash/MM account with both `maxMonthsReserve` and `sweepToAssetId` set, computes `excess = balance - maxMonthsReserve × annualExpenses / 12`
+- If excess > 0, moves it directly to the target brokerage account (no taxes — this is just a balance transfer within the simulation)
+- Only `taxableBrokerage` accounts are valid sweep targets; any other target type is silently skipped
+- UI shows sweep controls only when at least one brokerage account exists; an inline error is shown when max ≤ min
+
 ## RMD (Required Minimum Distributions)
 - Traditional IRA accounts require distributions starting at age 73 (per IRS Uniform Lifetime Table)
 - `calculateRmd()` computes per-member RMDs based on aggregate traditional balance per member
@@ -210,7 +219,7 @@ Each year captures `startBalances` (beginning of year) and `preAppreciationBalan
 - **Tabs**: Household Setup | Projection | Compare Simulations
   - **Household Setup**: 3 collapsible sections:
     - *Household Members*: member fields + income sources per member (type, name, amount, growth, start/last age); SS benefit estimator; healthcare plan per member
-    - *Household Assets*: cash (non-removable) + addable accounts; each has balance, member owner, min. reserve (months of expenses for cash/MM), Roth basis, and annual contribution periods (by age range)
+    - *Household Assets*: cash (non-removable) + addable accounts; each has balance, member owner, min. reserve (months of expenses for cash/MM), optional max reserve + sweep-to brokerage account (cash/MM only, visible when a brokerage account exists), Roth basis, and annual contribution periods (by age range)
     - *Household Expenses*: single-row per expense with columns Type · Name · Amount · Freq/Every · Start · End (incl.) · Inflation Adjusted?; type options: Regular, Periodic, Education 529
   - **Projection**: chart → Assumptions panel → Year-by-Year Detail table
   - **Compare Simulations**: multi-simulation line chart with checkboxes to include/exclude simulations
