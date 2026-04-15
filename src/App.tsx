@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { useLocalStorage } from './hooks/useLocalStorage'
-import { DEFAULT_CONFIG, type AppConfig, type SimulationStore, type SavedSimulation } from './types'
+import { DEFAULT_CONFIG, DEFAULT_HEALTHCARE_PLAN, type AppConfig, type SimulationStore, type SavedSimulation } from './types'
 import { projectFinances, findDepletionAge } from './lib/projection'
 import HouseholdPanel from './components/HouseholdPanel'
 import ProjectionChart from './components/ProjectionChart'
@@ -41,8 +41,14 @@ function createSampleConfig(): AppConfig {
   return {
     ...DEFAULT_CONFIG,
     household: [
-      { id: alexId,   name: 'Alex',   ageAtSimulationStart: 40, retirementAge: 65, state: 'OR' },
-      { id: jordanId, name: 'Jordan', ageAtSimulationStart: 38, retirementAge: 65, state: 'OR' },
+      {
+        id: alexId, name: 'Alex', ageAtSimulationStart: 40, retirementAge: 65, state: 'OR',
+        healthcarePlan: { ...DEFAULT_HEALTHCARE_PLAN, enabled: true, employerCoverage: 'own' },
+      },
+      {
+        id: jordanId, name: 'Jordan', ageAtSimulationStart: 38, retirementAge: 65, state: 'OR',
+        healthcarePlan: { ...DEFAULT_HEALTHCARE_PLAN, enabled: true, employerCoverage: alexId },
+      },
     ],
     incomeSources: [
       { id: makeId(), memberId: alexId,   name: "Alex's Salary",          incomeType: 'wage'          as const, startAge: 40, annualAmount: 100_000, annualGrowthRate: 0.03, endAge: 65 },
@@ -58,7 +64,7 @@ function createSampleConfig(): AppConfig {
       {
         id: makeId(), type: 'moneyMarketSavings',
         balanceAtSimulationStart: 35_000, monthsReserve: 2,
-        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 3_600 }],
+        contributions: [],
       },
       {
         id: makeId(), type: 'taxableBrokerage',
@@ -85,7 +91,12 @@ function createSampleConfig(): AppConfig {
       {
         id: makeId(), name: 'Monthly Living Expenses',
         expenseType: 'regular' as const, frequency: 'monthly' as const,
-        amount: 4_200, inflationAdjusted: true,
+        amount: 7_000, inflationAdjusted: true,
+      },
+      {
+        id: makeId(), name: 'Mortgage',
+        expenseType: 'regular' as const, frequency: 'monthly' as const,
+        amount: 2_000, inflationAdjusted: false, endAge: 60,
       },
       {
         id: makeId(), name: 'Home Renovation',
