@@ -53,8 +53,16 @@ Everything runs in the browser. No accounts, no servers, no data leaves your mac
 
 ### Withdrawal Waterfall
 When cash runs low, the system automatically draws from accounts in a tax-efficient order:
-- Before age 60: Money Market, Brokerage, Roth, Traditional, 529
-- Age 60+: Money Market, Brokerage, Traditional, Roth, 529
+
+**Before age 60:**
+Money Market → Brokerage → Roth contributions (always penalty-free) → Traditional IRA → Roth earnings (last resort, preserve tax-free growth) → 529
+
+**Age 60+:**
+Money Market → Brokerage → Traditional IRA → Roth → 529
+
+Roth contribution basis is drawn before Traditional because it is penalty- and tax-free. Roth earnings are saved for last because they represent the most valuable tax-free growth and should be preserved as long as possible.
+
+In households where one member has passed the early withdrawal age (59) and the other has not, the system prefers the older member's retirement accounts to avoid penalties. Among members who are both under 59, the younger member's accounts are drawn first, preserving the older member's balance until they turn 59.
 
 Reserve accounts (cash and money market) are topped up to their target levels before other spending.
 

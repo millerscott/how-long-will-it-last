@@ -149,7 +149,7 @@ Each year captures `startBalances` (beginning of year) and `preAppreciationBalan
 ### Named constants
 - `EARLY_WITHDRAWAL_AGE = 59` — 10% penalty on traditional + Roth earnings withdrawn before this age
 - `EARLY_WITHDRAWAL_PENALTY_RATE = 0.10`
-- `WATERFALL_AGE_THRESHOLD = 60` — switches Roth-before-Traditional to Traditional-before-Roth
+- `WATERFALL_AGE_THRESHOLD = 60` — switches split Roth/Traditional order (pre-60) to Traditional-before-Roth (60+)
 - `RMD_START_AGE = 73`
 - `MEDICARE_AGE = 65`
 
@@ -181,9 +181,10 @@ Each year captures `startBalances` (beginning of year) and `preAppreciationBalan
 
 ## Waterfall & reserves
 - `applyWaterfall` fires when cash or any MM-with-reserve is below its target (`monthsReserve × annualExpenses / 12`)
-- Pull order pre-60: MM (above floor) → taxable brokerage → Roth → Traditional → 529
-- Pull order 60+: MM (above floor) → taxable brokerage → Traditional → Roth → 529
-- Tracks `rothWithdrawn` and `rothPenaltyFreeWithdrawn` (from Roth contribution basis) for accurate early-withdrawal penalty
+- **Pull order pre-60** (with basis tracking): MM (above floor) → Brokerage → Roth contributions/basis (penalty-free) → Traditional → Roth earnings (penalized, preserve tax-free growth) → 529
+- **Pull order 60+**: MM (above floor) → Brokerage → Traditional → Roth → 529
+- Within retirement account types, accounts are sorted by owner age: penalty-free owners (age ≥ 59) drawn first; among penalized owners, youngest first (preserves the older member's balance until they reach penalty-free age)
+- Tracks `penaltyBearingWithdrawn` per account based on the actual owner's age, not the primary member's age
 - After pulling, cash distributes to MM reserve accounts up to their targets
 - `annualExpenses` passed to waterfall excludes education expenses (covered by 529 draw separately)
 
