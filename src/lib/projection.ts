@@ -116,6 +116,10 @@ export interface YearlySnapshot {
   rothConverted: number
   depleted: boolean
   marketCrashActive: boolean
+  /** Taxable brokerage was liquidated to fund contributions to tax-advantaged/529 accounts this year */
+  brokerageWithdrawnForContributions: boolean
+  /** A retirement or 529 account was liquidated to fund contributions to other accounts this year */
+  taxAdvantagedWithdrawnForContributions: boolean
 }
 
 /**
@@ -692,6 +696,8 @@ interface AccountUpdateResult {
   rothWithdrawn: number
   rothPenaltyFreeWithdrawn: number
   earlyWithdrawalPenalty: number
+  brokerageWithdrawnForContributions: boolean
+  taxAdvantagedWithdrawnForContributions: boolean
 }
 
 function updateAccounts(
@@ -709,6 +715,8 @@ function updateAccounts(
 
   // 1. Contributions
   let totalContributions = 0
+  // Track contributions to tax-advantaged accounts (retirement + 529) separately for warning flags
+  let taxAdvantagedContributions = 0
   for (const asset of householdAssets) {
     if (asset.type === 'cash') continue
     const activePeriod = asset.contributions.find(
@@ -719,6 +727,7 @@ function updateAccounts(
       const prev = accountBalances.get(asset.id) ?? 0
       accountBalances.set(asset.id, prev + contribution)
       totalContributions += contribution
+      if (asset.type !== 'taxableBrokerage') taxAdvantagedContributions += contribution
       if (asset.type === 'retirementRoth') {
         const prevBasis = rothBasisMap.get(asset.id) ?? 0
         rothBasisMap.set(asset.id, prevBasis + contribution)
@@ -805,7 +814,12 @@ function updateAccounts(
     incomeBreakdown.push({ label: 'Traditional IRA Withdrawal', amount: traditionalWithdrawn })
   }
 
-  return { rothConverted, brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn, earlyWithdrawalPenalty }
+  // Contribution-funding warning flags: fired when the waterfall drew from investment accounts
+  // while contributions were being made to tax-advantaged/529 accounts in the same year.
+  const brokerageWithdrawnForContributions = brokerageWithdrawn > 0 && taxAdvantagedContributions > 0
+  const taxAdvantagedWithdrawnForContributions = (traditionalWithdrawn + rothWithdrawn) > 0 && taxAdvantagedContributions > 0
+
+  return { rothConverted, brokerageWithdrawn, traditionalWithdrawn, rothWithdrawn, rothPenaltyFreeWithdrawn, earlyWithdrawalPenalty, brokerageWithdrawnForContributions, taxAdvantagedWithdrawnForContributions }
 }
 
 interface PostWaterfallTaxResult {
@@ -987,6 +1001,8 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       rothConverted: acct.rothConverted,
       depleted,
       marketCrashActive: equityOverride !== null,
+      brokerageWithdrawnForContributions: acct.brokerageWithdrawnForContributions,
+      taxAdvantagedWithdrawnForContributions: acct.taxAdvantagedWithdrawnForContributions,
     })
 
     if (depleted) break

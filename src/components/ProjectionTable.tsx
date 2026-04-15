@@ -121,6 +121,12 @@ export default function ProjectionTable({ snapshots }: Props) {
                     {s.earlyWithdrawalPenalty > 0 && (
                       <span className="ml-1 text-red-500 text-xs" title="Early withdrawal penalty (10%) applied">⚠</span>
                     )}
+                    {s.taxAdvantagedWithdrawnForContributions && (
+                      <span className="ml-1 text-red-600 text-xs font-bold" title="Retirement/529 accounts were liquidated to fund contributions — consider pausing contributions">🚨</span>
+                    )}
+                    {!s.taxAdvantagedWithdrawnForContributions && s.brokerageWithdrawnForContributions && (
+                      <span className="ml-1 text-amber-500 text-xs" title="Taxable brokerage was liquidated to fund retirement/529 contributions — consider pausing contributions">⚡</span>
+                    )}
                   </td>
                   {/* Income — clickable */}
                   <td className="py-2 pr-4 text-right">
