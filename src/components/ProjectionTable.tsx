@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import type { YearlySnapshot } from '../lib/projection'
 import type { AssetType } from '../types'
 
@@ -20,7 +20,10 @@ const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD',
 interface PopoverState {
   age: number
   type: 'tax' | 'assets' | 'income' | 'expenses'
-  top: number
+  /** Viewport y of the bottom edge of the anchor button (for positioning below) */
+  anchorBottom: number
+  /** Viewport y of the top edge of the anchor button (for flipping above) */
+  anchorTop: number
   /** Set when anchoring to the left edge of the button */
   left?: number
   /** Set when anchoring to the right edge of the button (near right viewport edge) */
@@ -57,11 +60,23 @@ export default function ProjectionTable({ snapshots }: Props) {
     setPopover({
       age,
       type,
-      top: rect.bottom + window.scrollY,
+      anchorBottom: rect.bottom,
+      anchorTop: rect.top,
       left: anchorRight ? undefined : rect.left,
       right: anchorRight ? window.innerWidth - rect.right : undefined,
     })
   }
+
+  // After the popover renders, check if it clips the bottom of the viewport and flip it above the button.
+  useLayoutEffect(() => {
+    if (!popover || !popoverRef.current) return
+    const el = popoverRef.current
+    const elBottom = el.getBoundingClientRect().bottom
+    if (elBottom > window.innerHeight - 8) {
+      const flippedTop = popover.anchorTop - el.offsetHeight - 6
+      el.style.top = `${Math.max(8, flippedTop)}px`
+    }
+  }, [popover])
 
   const activeSnapshot = popover ? snapshots.find((s) => s.age === popover.age) : null
 
@@ -183,7 +198,7 @@ export default function ProjectionTable({ snapshots }: Props) {
           ref={popoverRef}
           style={{
             position: 'fixed',
-            top: popover.top - window.scrollY + 6,
+            top: popover.anchorBottom + 6,
             ...(popover.left !== undefined ? { left: popover.left } : { right: popover.right }),
           }}
           className="z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-3 min-w-48 text-sm max-w-lg"
