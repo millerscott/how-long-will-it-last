@@ -96,17 +96,17 @@ function createSampleConfig(): AppConfig {
       {
         id: makeId(), name: 'Mortgage',
         expenseType: 'regular' as const, frequency: 'monthly' as const,
-        amount: 2_000, inflationAdjusted: false, endAge: 60,
+        amount: 2_200, inflationAdjusted: false, endAge: 60,
       },
       {
         id: makeId(), name: 'Home Renovation',
         expenseType: 'periodic' as const, intervalYears: 7,
-        amount: 20_000, inflationAdjusted: false,
+        amount: 20_000, inflationAdjusted: true,
       },
       {
         id: makeId(), name: 'College Tuition',
         expenseType: 'education' as const, frequency: 'annual' as const,
-        amount: 20_000, inflationAdjusted: true, startAge: 55, endAge: 58,
+        amount: 50_000, inflationAdjusted: true, startAge: 55, endAge: 58,
       },
     ],
   }
