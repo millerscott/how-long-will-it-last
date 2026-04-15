@@ -61,28 +61,28 @@ function createSampleConfig(): AppConfig {
       {
         id: makeId(), type: 'cash',
         balanceAtSimulationStart: 20_000, contributions: [], monthsReserve: 3,
-        maxMonthsReserve: 6, sweepToAssetId: brokerageId,
+        maxMonthsReserve: 4, sweepToAssetId: brokerageId,
       },
       {
         id: makeId(), type: 'moneyMarketSavings',
         balanceAtSimulationStart: 35_000, monthsReserve: 2,
-        maxMonthsReserve: 6, sweepToAssetId: brokerageId,
+        maxMonthsReserve: 4, sweepToAssetId: brokerageId,
         contributions: [],
       },
       {
         id: brokerageId, type: 'taxableBrokerage',
         balanceAtSimulationStart: 45_000,
-        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 6_000 }],
+        contributions: [],
       },
       {
         id: makeId(), type: 'retirementTraditional', memberId: alexId,
         balanceAtSimulationStart: 120_000,
-        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 7_000 }],
+        contributions: [{ id: makeId(), startAge: 40, endAge: 65, annualAmount: 3_500 }],
       },
       {
         id: makeId(), type: 'retirementRoth', memberId: jordanId,
         balanceAtSimulationStart: 65_000, rothContributionBasis: 65_000,
-        contributions: [{ id: makeId(), startAge: 38, endAge: 65, annualAmount: 7_000 }],
+        contributions: [{ id: makeId(), startAge: 38, endAge: 65, annualAmount: 3_500 }],
       },
       {
         id: makeId(), type: 'educationSavings529',
