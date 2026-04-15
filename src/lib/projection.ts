@@ -827,6 +827,21 @@ function updateAccounts(
     incomeBreakdown.push({ label: 'Traditional IRA Withdrawal', amount: traditionalWithdrawn })
   }
 
+  // 4. Sweep excess above max reserve to designated brokerage account
+  for (const asset of householdAssets) {
+    if (asset.type !== 'cash' && asset.type !== 'moneyMarketSavings') continue
+    if (!asset.maxMonthsReserve || !asset.sweepToAssetId) continue
+    const target = householdAssets.find((a) => a.id === asset.sweepToAssetId && a.type === 'taxableBrokerage')
+    if (!target) continue
+    const ceiling = asset.maxMonthsReserve * regularExpenseTotal / 12
+    const balance = accountBalances.get(asset.id) ?? 0
+    const excess = Math.max(0, balance - ceiling)
+    if (excess > 0) {
+      accountBalances.set(asset.id, balance - excess)
+      accountBalances.set(target.id, (accountBalances.get(target.id) ?? 0) + excess)
+    }
+  }
+
   // Contribution-funding warning flags: fired when the waterfall drew from investment accounts
   // while contributions were being made to tax-advantaged/529 accounts in the same year.
   const brokerageWithdrawnForContributions = brokerageWithdrawn > 0 && taxAdvantagedContributions > 0

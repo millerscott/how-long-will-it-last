@@ -725,7 +725,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                       onChange={(v) => updateAsset(cashAsset.id, { balanceAtSimulationStart: v })}
                     />
                   </div>
-                  <div className="col-span-4 flex flex-col gap-0.5">
+                  <div className="col-span-4 flex flex-col gap-1">
                     <div className="flex items-center gap-1">
                       <input
                         type="number"
@@ -738,11 +738,41 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                           monthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
                         })}
                       />
-                      <span className="text-xs text-gray-400 shrink-0">mo.</span>
+                      <span className="text-xs text-gray-400 shrink-0">mo. min</span>
                     </div>
                     {cashReserveTarget > 0 && (
                       <span className="text-xs text-gray-400">≈ {fmt.format(cashReserveTarget)}</span>
                     )}
+                    {(() => {
+                      const brokerageAccounts = config.householdAssets.filter((a) => a.type === 'taxableBrokerage')
+                      if (brokerageAccounts.length === 0) return null
+                      return (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            placeholder="∞"
+                            className="input text-sm w-full"
+                            value={cashAsset.maxMonthsReserve ?? ''}
+                            onChange={(e) => updateAsset(cashAsset.id, {
+                              maxMonthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
+                            })}
+                          />
+                          <span className="text-xs text-gray-400 shrink-0">mo. max →</span>
+                          <select
+                            className="input text-xs w-full"
+                            value={cashAsset.sweepToAssetId ?? ''}
+                            onChange={(e) => updateAsset(cashAsset.id, { sweepToAssetId: e.target.value || undefined })}
+                          >
+                            <option value="">pick account</option>
+                            {brokerageAccounts.map((a) => (
+                              <option key={a.id} value={a.id}>Brokerage</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
+                    })()}
                   </div>
                   <div className="col-span-1" />
                 </div>
@@ -775,7 +805,7 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     />
                   </div>
                   {isMM ? (
-                    <div className="col-span-4 flex flex-col gap-0.5">
+                    <div className="col-span-4 flex flex-col gap-1">
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
@@ -788,11 +818,41 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                             monthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
                           })}
                         />
-                        <span className="text-xs text-gray-400 shrink-0">mo.</span>
+                        <span className="text-xs text-gray-400 shrink-0">mo. min</span>
                       </div>
                       {mmReserveTarget > 0 && (
                         <span className="text-xs text-gray-400">≈ {fmt.format(mmReserveTarget)}</span>
                       )}
+                      {(() => {
+                        const brokerageAccounts = config.householdAssets.filter((a) => a.type === 'taxableBrokerage')
+                        if (brokerageAccounts.length === 0) return null
+                        return (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="∞"
+                              className="input text-sm w-full"
+                              value={asset.maxMonthsReserve ?? ''}
+                              onChange={(e) => updateAsset(asset.id, {
+                                maxMonthsReserve: e.target.value === '' ? undefined : Math.max(0, Number(e.target.value)),
+                              })}
+                            />
+                            <span className="text-xs text-gray-400 shrink-0">mo. max →</span>
+                            <select
+                              className="input text-xs w-full"
+                              value={asset.sweepToAssetId ?? ''}
+                              onChange={(e) => updateAsset(asset.id, { sweepToAssetId: e.target.value || undefined })}
+                            >
+                              <option value="">pick account</option>
+                              {brokerageAccounts.map((a) => (
+                                <option key={a.id} value={a.id}>Brokerage</option>
+                              ))}
+                            </select>
+                          </div>
+                        )
+                      })()}
                     </div>
                   ) : (asset.type === 'retirementTraditional' || asset.type === 'retirementRoth') && config.household.length >= 2 ? (
                     <div className="col-span-4">

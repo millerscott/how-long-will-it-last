@@ -128,6 +128,10 @@ export interface HouseholdAsset {
   contributions: ContributionPeriod[]
   /** Months of annual expenses to hold as a minimum reserve. Cash and MM only; undefined or 0 = no reserve. */
   monthsReserve?: number
+  /** Cash/MM only: if balance exceeds this many months of expenses, sweep the excess to sweepToAssetId. */
+  maxMonthsReserve?: number
+  /** Cash/MM only: ID of a taxable brokerage account to receive excess above maxMonthsReserve. */
+  sweepToAssetId?: string
   /** Roth IRA only: portion of the starting balance that came from contributions (always penalty/tax-free to withdraw).
    *  Defaults to the full balance if omitted (previous behavior). */
   rothContributionBasis?: number
