@@ -438,7 +438,10 @@ function computeIncome(ctx: SimContext, yearsElapsed: number): IncomeResult {
     }
   }
 
-  // RMD: forced withdrawal from traditional accounts for members age 73+
+  // RMD: forced withdrawal from traditional accounts for members age 73+.
+  // NOTE: calculateRmd mutates accountBalances in place (reduces traditional IRA balances).
+  // This is intentional — RMDs are effectively a withdrawal that settles into cash later
+  // when netCashFlow is applied to the cash account.
   const rmdWithdrawn = calculateRmd(accountBalances, householdAssets, household, yearsElapsed)
   if (rmdWithdrawn > 0) {
     incomeBreakdown.push({ label: 'Required Minimum Distribution', amount: rmdWithdrawn })
