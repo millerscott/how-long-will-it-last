@@ -226,12 +226,14 @@ export default function HouseholdPanel({ config, onChange }: Props) {
               </span>
             )}
           </button>
-          <button
-            onClick={addMember}
-            className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded hover:bg-indigo-700 transition-colors"
-          >
-            + Add member
-          </button>
+          {config.household.length < 2 && (
+            <button
+              onClick={addMember}
+              className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded hover:bg-indigo-700 transition-colors"
+            >
+              + Add member
+            </button>
+          )}
         </div>
 
         {membersOpen && (
@@ -240,6 +242,11 @@ export default function HouseholdPanel({ config, onChange }: Props) {
               <div className="text-center py-10 text-gray-400 text-sm border-2 border-dashed border-gray-200 rounded-lg">
                 No household members added yet.
               </div>
+            )}
+            {config.household.length >= 2 && (
+              <p className="text-xs text-gray-400">
+                Maximum of 2 household members supported. Model dependents' costs through expenses (healthcare, education) and a 529 account.
+              </p>
             )}
 
             <div className="space-y-6">

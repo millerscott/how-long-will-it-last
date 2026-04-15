@@ -871,7 +871,9 @@ function applyAppreciation(ctx: SimContext, primaryAge: number): { equityOverrid
 }
 
 export function projectFinances(config: AppConfig): YearlySnapshot[] {
-  const { inflationRate, healthcareInflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, household, marketCrashes, rothConversionTargetBracket } = config
+  const { inflationRate, healthcareInflationRate, ssCola, incomeSources, expenses, householdAssets, assetRates, marketCrashes, rothConversionTargetBracket } = config
+  // Cap at 2 members: filing status (MFJ vs single) and tax math only supports 1–2 members
+  const household = config.household.slice(0, 2)
 
   const primaryMember = household[0]
   if (!primaryMember) return []
