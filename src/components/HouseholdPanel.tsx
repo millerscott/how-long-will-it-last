@@ -25,7 +25,7 @@ function hasOverlappingContributions(contributions: ContributionPeriod[]): boole
 }
 
 function uid() {
-  return Math.random().toString(36).slice(2)
+  return crypto.randomUUID()
 }
 
 const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })

@@ -4,7 +4,7 @@ import PercentField from './PercentField'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 
 function uid() {
-  return Math.random().toString(36).slice(2)
+  return crypto.randomUUID()
 }
 
 const PRESETS: Omit<MarketCrash, 'id'>[] = [

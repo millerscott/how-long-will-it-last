@@ -31,7 +31,7 @@ const TAB_LABELS: Record<Tab, string> = {
 }
 
 function makeId(): string {
-  return Math.random().toString(36).slice(2)
+  return crypto.randomUUID()
 }
 
 function createDefaultStore(): SimulationStore {

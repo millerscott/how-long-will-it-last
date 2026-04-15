@@ -96,7 +96,7 @@ simulationMode:          rawConfig.simulationMode ?? 'real'
 
 ## Key conventions
 - The simulation in `projection.ts` is pure — takes `AppConfig`, returns `YearlySnapshot[]`.
-- IDs use `Math.random().toString(36).slice(2)`.
+- IDs use `crypto.randomUUID()` (122-bit, browser-native, no dependency).
 - Monetary display uses `Intl.NumberFormat` with `style: 'currency'` — formatters are at module scope, not in component bodies.
 - Percent values stored as decimals (e.g. `0.06` for 6%), displayed × 100.
 - Balance/currency inputs use `CurrencyInput` (`src/components/CurrencyInput.tsx`) — `type="text"` + `inputMode="numeric"`, comma-formatted on blur.
