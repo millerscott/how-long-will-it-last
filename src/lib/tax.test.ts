@@ -431,3 +431,72 @@ describe('calculateNiit', () => {
     expect(calculateNiit(nii, magi, 'single')).toBeGreaterThan(calculateNiit(nii, magi, 'marriedFilingJointly'))
   })
 })
+
+// ---------------------------------------------------------------------------
+// calculateLocalTax — Multnomah County (OR_MULTNOMAH)
+// ---------------------------------------------------------------------------
+
+import { calculateLocalTax, ARTS_TAX_AMOUNT, ARTS_TAX_INCOME_THRESHOLD } from './localTaxJurisdictions'
+
+describe('calculateLocalTax — OR_MULTNOMAH', () => {
+  it('returns 0 for unknown jurisdiction', () => {
+    expectDollars(calculateLocalTax(200_000, 'CA_SFCO', 'single', 0), 0)
+  })
+
+  it('returns 0 for income below Arts Tax threshold', () => {
+    expectDollars(calculateLocalTax(500, 'OR_MULTNOMAH', 'single', 0), 0)
+  })
+
+  it('charges only Arts Tax for income between $1,000 and SHS/PFA thresholds (single)', () => {
+    // Income $50,000 single — below $125,000 threshold; 1 eligible adult
+    expectDollars(calculateLocalTax(50_000, 'OR_MULTNOMAH', 'single', 1), ARTS_TAX_AMOUNT)
+  })
+
+  it('charges only Arts Tax for income between $1,000 and SHS/PFA thresholds (MFJ)', () => {
+    // Income $150,000 MFJ — below $200,000 threshold; 2 eligible adults
+    expectDollars(calculateLocalTax(150_000, 'OR_MULTNOMAH', 'marriedFilingJointly', 2), ARTS_TAX_AMOUNT * 2)
+  })
+
+  it('computes SHS + PFA at 2.5% combined on income in the middle band (single)', () => {
+    // Income $175,000 single: above $125k, below $250k
+    // SHS: (175,000 - 125,000) × 1% = $500
+    // PFA: (175,000 - 125,000) × 1.5% = $750
+    // Arts: $35 × 1 = $35
+    expectDollars(calculateLocalTax(175_000, 'OR_MULTNOMAH', 'single', 1), 500 + 750 + ARTS_TAX_AMOUNT)
+  })
+
+  it('computes SHS + PFA at 2.5% combined on income in the middle band (MFJ)', () => {
+    // Income $300,000 MFJ: above $200k, below $400k
+    // SHS: (300,000 - 200,000) × 1% = $1,000
+    // PFA: (300,000 - 200,000) × 1.5% = $1,500
+    // Arts: $35 × 2 = $70
+    expectDollars(calculateLocalTax(300_000, 'OR_MULTNOMAH', 'marriedFilingJointly', 2), 1_000 + 1_500 + ARTS_TAX_AMOUNT * 2)
+  })
+
+  it('computes 4% effective rate on income above the upper PFA threshold (single)', () => {
+    // Income $300,000 single: above $250k
+    // SHS: (300,000 - 125,000) × 1% = $1,750
+    // PFA: (250,000 - 125,000) × 1.5% + (300,000 - 250,000) × 3% = $1,875 + $1,500 = $3,375
+    // Arts: $35 × 1 = $35
+    expectDollars(calculateLocalTax(300_000, 'OR_MULTNOMAH', 'single', 1), 1_750 + 3_375 + ARTS_TAX_AMOUNT)
+  })
+
+  it('computes 4% effective rate on income above the upper PFA threshold (MFJ)', () => {
+    // Income $500,000 MFJ: above $400k
+    // SHS: (500,000 - 200,000) × 1% = $3,000
+    // PFA: (400,000 - 200,000) × 1.5% + (500,000 - 400,000) × 3% = $3,000 + $3,000 = $6,000
+    // Arts: $35 × 2 = $70
+    expectDollars(calculateLocalTax(500_000, 'OR_MULTNOMAH', 'marriedFilingJointly', 2), 3_000 + 6_000 + ARTS_TAX_AMOUNT * 2)
+  })
+
+  it('artsTaxCount defaults to 0 when not passed', () => {
+    // No Arts Tax when artsTaxCount is omitted
+    const withArts = calculateLocalTax(50_000, 'OR_MULTNOMAH', 'single', 1)
+    const withoutArts = calculateLocalTax(50_000, 'OR_MULTNOMAH', 'single')
+    expectDollars(withArts - withoutArts, ARTS_TAX_AMOUNT)
+  })
+
+  it('ARTS_TAX_INCOME_THRESHOLD is $1,000', () => {
+    expect(ARTS_TAX_INCOME_THRESHOLD).toBe(1_000)
+  })
+})

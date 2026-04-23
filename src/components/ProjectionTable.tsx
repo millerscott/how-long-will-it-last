@@ -233,6 +233,7 @@ export default function ProjectionTable({ snapshots }: Props) {
                 { label: 'Federal Income Tax', value: activeSnapshot.federalIncomeTax + activeSnapshot.traditionalIraTax },
                 { label: 'FICA', value: activeSnapshot.ficaTax },
                 { label: 'State Income Tax', value: activeSnapshot.stateIncomeTax },
+                ...(activeSnapshot.localIncomeTax > 0 ? [{ label: 'Local Income Tax', value: activeSnapshot.localIncomeTax }] : []),
                 { label: 'Capital Gains Tax', value: activeSnapshot.capitalGainsTax },
                 { label: 'Net Investment Income Tax', value: activeSnapshot.niit },
                 { label: 'Early Withdrawal Penalty (10%)', value: activeSnapshot.earlyWithdrawalPenalty },

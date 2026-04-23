@@ -12,6 +12,7 @@ import {
   calculateIrmaa,
   type FilingStatus,
 } from './tax'
+import { calculateLocalTax, ARTS_TAX_INCOME_THRESHOLD } from './localTaxJurisdictions'
 
 /** IRS Uniform Lifetime Table (2024+) — divisor by age for RMD calculation */
 const RMD_DIVISORS: Record<number, number> = {
@@ -105,6 +106,7 @@ export interface YearlySnapshot {
   traditionalIraTax: number
   ficaTax: number
   stateIncomeTax: number
+  localIncomeTax: number
   totalTax: number
   expenses: number
   expenseBreakdown: IncomeBreakdownItem[]
@@ -549,6 +551,8 @@ interface InitialTaxResult {
   ficaTax: number
   stateIncomeTax: number
   primaryStateBaseIncome: number
+  localIncomeTax: number
+  primaryJurisdictionBaseIncome: number
   preTaxPremiumByMember: Map<string, number>
   /** Traditional retirement contribution deduction applied this year (above-the-line) */
   traditionalDeduction: number
@@ -624,7 +628,34 @@ function computeInitialTaxes(
   }
   const primaryStateBaseIncome = incomeByState.get(primaryState) ?? 0
 
-  return { taxableWageIncome, taxableW2WageIncome, taxableSs, federalIncomeTax, ficaTax, stateIncomeTax, primaryStateBaseIncome, preTaxPremiumByMember, traditionalDeduction }
+  // Local taxes: aggregate income by jurisdiction, compute once per jurisdiction
+  const incomeByJurisdiction = new Map<string, number>()
+  const artsTaxCountByJurisdiction = new Map<string, number>()
+  for (const [memberId, memberWages] of inc.wageByMember) {
+    const member = household.find((m) => m.id === memberId)!
+    const jurisdiction = member.localTaxJurisdiction
+    if (!jurisdiction) continue
+    const preTaxDeduction = preTaxPremiumByMember.get(memberId) ?? 0
+    const memberIncome = memberWages - preTaxDeduction
+    incomeByJurisdiction.set(jurisdiction, (incomeByJurisdiction.get(jurisdiction) ?? 0) + memberIncome)
+    if (memberIncome > ARTS_TAX_INCOME_THRESHOLD) {
+      artsTaxCountByJurisdiction.set(jurisdiction, (artsTaxCountByJurisdiction.get(jurisdiction) ?? 0) + 1)
+    }
+  }
+  const primaryJurisdiction = primaryMember.localTaxJurisdiction
+  if (primaryJurisdiction) {
+    incomeByJurisdiction.set(primaryJurisdiction, (incomeByJurisdiction.get(primaryJurisdiction) ?? 0) + inc.interestIncome)
+    const primIncome = incomeByJurisdiction.get(primaryJurisdiction) ?? 0
+    incomeByJurisdiction.set(primaryJurisdiction, Math.max(0, primIncome - traditionalDeduction))
+  }
+  let localIncomeTax = 0
+  for (const [jurisdiction, income] of incomeByJurisdiction) {
+    const artsTaxCount = artsTaxCountByJurisdiction.get(jurisdiction) ?? 0
+    localIncomeTax += calculateLocalTax(income, jurisdiction, filingStatus, artsTaxCount)
+  }
+  const primaryJurisdictionBaseIncome = primaryJurisdiction ? (incomeByJurisdiction.get(primaryJurisdiction) ?? 0) : 0
+
+  return { taxableWageIncome, taxableW2WageIncome, taxableSs, federalIncomeTax, ficaTax, stateIncomeTax, primaryStateBaseIncome, localIncomeTax, primaryJurisdictionBaseIncome, preTaxPremiumByMember, traditionalDeduction }
 }
 
 interface ExpenseResult {
@@ -855,6 +886,7 @@ interface PostWaterfallTaxResult {
   niit: number
   stateCapitalGainsTax: number
   traditionalIraTax: number
+  localPostWaterfallTax: number
   postWaterfallTaxes: number
 }
 
@@ -896,8 +928,20 @@ function computePostWaterfallTaxes(
     : 0
   const traditionalIraTax = traditionalIraFederalTax + traditionalIraStateTax
 
-  const postWaterfallTaxes = capitalGainsTax + niit + stateCapitalGainsTax + traditionalIraTax
-  return { capitalGainsTax, niit, stateCapitalGainsTax, traditionalIraTax, postWaterfallTaxes }
+  // Local post-waterfall taxes: delta method (same as state capital gains / traditional IRA taxes)
+  const primaryJurisdiction = primaryMember.localTaxJurisdiction
+  const localCapitalGainsTax = (primaryJurisdiction && acct.brokerageWithdrawn > 0)
+    ? calculateLocalTax(tax.primaryJurisdictionBaseIncome + acct.brokerageWithdrawn, primaryJurisdiction, filingStatus, 0)
+      - calculateLocalTax(tax.primaryJurisdictionBaseIncome, primaryJurisdiction, filingStatus, 0)
+    : 0
+  const localIraWithdrawalTax = (primaryJurisdiction && totalTraditionalWithdrawn > 0)
+    ? calculateLocalTax(tax.primaryJurisdictionBaseIncome + totalTraditionalWithdrawn, primaryJurisdiction, filingStatus, 0)
+      - calculateLocalTax(tax.primaryJurisdictionBaseIncome, primaryJurisdiction, filingStatus, 0)
+    : 0
+  const localPostWaterfallTax = localCapitalGainsTax + localIraWithdrawalTax
+
+  const postWaterfallTaxes = capitalGainsTax + niit + stateCapitalGainsTax + traditionalIraTax + localPostWaterfallTax
+  return { capitalGainsTax, niit, stateCapitalGainsTax, traditionalIraTax, localPostWaterfallTax, postWaterfallTaxes }
 }
 
 function applyAppreciation(ctx: SimContext, primaryAge: number): { equityOverride: number | null } {
@@ -986,7 +1030,7 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
     const exp = computeExpenses(ctx, yearsElapsed, age)
 
     // Phase 4: Net cash flow → account updates (contributions, 529 draw, Roth conversion, waterfall)
-    const netCashFlow = inc.income - tax.federalIncomeTax - tax.ficaTax - tax.stateIncomeTax - exp.expenseTotal
+    const netCashFlow = inc.income - tax.federalIncomeTax - tax.ficaTax - tax.stateIncomeTax - tax.localIncomeTax - exp.expenseTotal
     const acct = updateAccounts(ctx, age, netCashFlow, exp.educationExpenseTotal, exp.regularExpenseTotal, tax.taxableWageIncome, inc.interestIncome, tax.taxableSs, inc.incomeBreakdown)
 
     // Phase 5: Post-waterfall taxes (capital gains, NIIT, traditional IRA)
@@ -1020,7 +1064,8 @@ export function projectFinances(config: AppConfig): YearlySnapshot[] {
       traditionalIraTax: pwTax.traditionalIraTax,
       ficaTax: tax.ficaTax,
       stateIncomeTax: tax.stateIncomeTax + pwTax.stateCapitalGainsTax,
-      totalTax: tax.federalIncomeTax + pwTax.capitalGainsTax + pwTax.niit + pwTax.traditionalIraTax + tax.ficaTax + tax.stateIncomeTax + pwTax.stateCapitalGainsTax + acct.earlyWithdrawalPenalty,
+      localIncomeTax: tax.localIncomeTax + pwTax.localPostWaterfallTax,
+      totalTax: tax.federalIncomeTax + pwTax.capitalGainsTax + pwTax.niit + pwTax.traditionalIraTax + tax.ficaTax + tax.stateIncomeTax + pwTax.stateCapitalGainsTax + tax.localIncomeTax + pwTax.localPostWaterfallTax + acct.earlyWithdrawalPenalty,
       earlyWithdrawalPenalty: acct.earlyWithdrawalPenalty,
       expenses: exp.expenseTotal,
       expenseBreakdown: exp.expenseBreakdown,

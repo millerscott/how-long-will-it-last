@@ -36,6 +36,8 @@ export interface HouseholdMember {
   ageAtSimulationStart: number
   retirementAge: number
   state: string
+  /** Optional local/county/city tax jurisdiction (e.g. 'OR_MULTNOMAH'). Undefined = no local tax. */
+  localTaxJurisdiction?: string
   healthcarePlan?: HealthcarePlan
 }
 

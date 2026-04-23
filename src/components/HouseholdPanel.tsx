@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AppConfig, HouseholdMember, IncomeSource, IncomeSourceType, HouseholdAsset, AssetType, ContributionPeriod, Expense, RegularExpense, EducationExpense, PeriodicExpense, ExpenseType, Frequency, HealthcarePlan } from '../types'
 import { ASSET_TYPE_LABELS, ADDABLE_ASSET_TYPES, DEFAULT_HEALTHCARE_PLAN } from '../types'
 import { US_STATES } from '../lib/states'
+import { LOCAL_JURISDICTIONS_BY_STATE } from '../lib/localTaxJurisdictions'
 import CurrencyInput from './CurrencyInput'
 import { useLocalStorage } from '../hooks/useLocalStorage'
 import { estimateSsBenefit } from '../lib/ssEstimate'
@@ -297,7 +298,14 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                   <select
                     className="input w-full"
                     value={member.state}
-                    onChange={(e) => updateMember(member.id, { state: e.target.value })}
+                    onChange={(e) => {
+                      const newState = e.target.value
+                      const hasJurisdictions = (LOCAL_JURISDICTIONS_BY_STATE[newState]?.length ?? 0) > 0
+                      updateMember(member.id, {
+                        state: newState,
+                        localTaxJurisdiction: hasJurisdictions ? member.localTaxJurisdiction : undefined,
+                      })
+                    }}
                   >
                     {US_STATES.map((s) => (
                       <option key={s.abbr} value={s.abbr}>
@@ -309,6 +317,22 @@ export default function HouseholdPanel({ config, onChange }: Props) {
                     <p className="text-xs text-amber-600 mt-1">State tax for this state is not yet supported</p>
                   )}
                 </div>
+
+                {(LOCAL_JURISDICTIONS_BY_STATE[member.state]?.length ?? 0) > 0 && (
+                  <div className="w-52 shrink-0">
+                    <label className="block text-xs text-gray-500 mb-1">Local Jurisdiction</label>
+                    <select
+                      className="input w-full"
+                      value={member.localTaxJurisdiction ?? ''}
+                      onChange={(e) => updateMember(member.id, { localTaxJurisdiction: e.target.value || undefined })}
+                    >
+                      <option value="">None</option>
+                      {LOCAL_JURISDICTIONS_BY_STATE[member.state].map((j) => (
+                        <option key={j.id} value={j.id}>{j.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-0.5 shrink-0 mt-4">
                   <button
